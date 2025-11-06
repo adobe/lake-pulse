@@ -1,9 +1,13 @@
 use crate::delta::metrics::DeltaMetrics;
+use crate::util::ascii_gantt::to_ascii_gantt;
 use serde::{Deserialize, Serialize};
-use serde_json::{Error as JsonError, Value, json};
+use serde_json::{Error as JsonError, json};
 use std::collections::{HashMap, LinkedList};
 use std::error::Error;
 use std::fmt::{Display, Formatter, Result as FmtResult};
+
+// Re-export GanttConfig for convenience
+pub use crate::util::ascii_gantt::GanttConfig;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FileInfo {
@@ -162,13 +166,13 @@ pub struct HealthReport {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TimedLikeMetrics {
-    pub start_duration_collection: LinkedList<(String, u128, u128)>,
+    pub duration_collection: LinkedList<(String, u128, u128)>,
 }
 
 impl TimedLikeMetrics {
-    pub fn to_chrome_tracing(&self) -> Result<Vec<Value>, Box<dyn Error + Send + Sync>> {
+    pub fn to_chrome_tracing(&self) -> Result<String, Box<dyn Error + Send + Sync>> {
         let mut events = Vec::new();
-        for (name, start, duration) in &self.start_duration_collection {
+        for (name, start, duration) in &self.duration_collection {
             events.push(json!({
                 "name": name,
                 "cat": "PERF",
@@ -184,7 +188,38 @@ impl TimedLikeMetrics {
                 "ts": start * 1000 + duration * 1000,
             }));
         }
-        Ok(events)
+        Ok(serde_json::to_string(&events)?)
+    }
+
+    /// Generate an ASCII Gantt chart representation of the timing data
+    ///
+    /// This creates a visual timeline showing when each operation started and how long it took.
+    ///
+    /// # Arguments
+    ///
+    /// * `config` - Optional configuration for the chart appearance. If None, uses default settings.
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// let gantt = metrics.to_ascii_gantt(None);
+    /// println!("{}", gantt);
+    /// ```
+    ///
+    /// Output example:
+    /// ```text
+    /// Timeline (ms):
+    ///                           1000        1550        2100        2650
+    ///                           |-----------|-----------|-----------|
+    /// storage_config_new_dur    [] 50ms
+    /// analyzer_new_dur           [====] 300ms
+    /// analyze_total_dur                [========================] 2400ms
+    /// ```
+    pub fn duration_collection_as_gantt(
+        &self,
+        config: Option<GanttConfig>,
+    ) -> Result<String, Box<dyn Error + Send + Sync>> {
+        to_ascii_gantt(&self.duration_collection, config)
     }
 }
 
@@ -783,10 +818,10 @@ impl Display for HealthReport {
             )?;
         }
 
-        if !report.timed_metrics.start_duration_collection.is_empty() {
+        if !report.timed_metrics.duration_collection.is_empty() {
             writeln!(f, "\n⏱️ Timed Metrics:")?;
             writeln!(f, "{}", "─".repeat(60))?;
-            for (name, _, dur) in report.timed_metrics.start_duration_collection.iter() {
+            for (name, _, dur) in report.timed_metrics.duration_collection.iter() {
                 writeln!(f, "  {}: {}ms", name, dur)?;
             }
         }
@@ -1248,5 +1283,423 @@ impl HealthMetrics {
                 );
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_chrome_tracing_with_real_data_reproduces_overflow() {
+        // This test reproduces the overflow bug with real Chrome tracing data
+        // The input has timestamps in microseconds (very large numbers)
+        let chrome_trace_input = r#"[{"cat":"PERF","name":"storage_config_new_dur","ph":"B","pid":"1","ts":1762455078689000},{"cat":"PERF","name":"storage_config_new_dur","ph":"E","pid":"1","ts":1762455078690000}]"#;
+
+        let events: Vec<serde_json::Value> =
+            serde_json::from_str(chrome_trace_input).expect("Failed to parse Chrome tracing JSON");
+
+        // Extract timing data - timestamps are in microseconds
+        let begin_ts = events[0]["ts"].as_u64().unwrap() as u128;
+        let end_ts = events[1]["ts"].as_u64().unwrap() as u128;
+
+        println!("Begin timestamp (microseconds): {}", begin_ts);
+        println!("End timestamp (microseconds): {}", end_ts);
+        println!("Duration (microseconds): {}", end_ts - begin_ts);
+
+        // The current code expects milliseconds and multiplies by 1000
+        // If we naively use these microsecond values as milliseconds, we get overflow
+        let mut collection = LinkedList::new();
+
+        // This is what would cause overflow - treating microseconds as milliseconds
+        // collection.push_back(("storage_config_new_dur".to_string(), begin_ts, end_ts - begin_ts));
+
+        // The correct approach: timestamps in the input are already in microseconds
+        // So we should NOT multiply by 1000 in to_chrome_tracing(), OR
+        // we need to store timestamps in milliseconds in our internal format
+
+        // For now, let's test with the corrected approach (divide by 1000 to get milliseconds)
+        collection.push_back((
+            "storage_config_new_dur".to_string(),
+            begin_ts / 1000,            // Convert to milliseconds
+            (end_ts - begin_ts) / 1000, // Duration in milliseconds
+        ));
+
+        let metrics = TimedLikeMetrics {
+            duration_collection: collection,
+        };
+
+        // This should work without overflow now
+        let output = metrics
+            .to_chrome_tracing()
+            .expect("Should generate Chrome tracing output");
+
+        let output_events: Vec<serde_json::Value> =
+            serde_json::from_str(&output).expect("Should parse output");
+
+        // Verify the output
+        assert_eq!(output_events.len(), 2);
+
+        // The output timestamps should be in microseconds (original format)
+        let output_begin_ts = output_events[0]["ts"].as_u64().unwrap();
+        let output_end_ts = output_events[1]["ts"].as_u64().unwrap();
+
+        println!("Output begin timestamp: {}", output_begin_ts);
+        println!("Output end timestamp: {}", output_end_ts);
+
+        // Verify the timestamps are approximately correct (within rounding error)
+        assert!(
+            (output_begin_ts as i128 - begin_ts as i128).abs() < 1000,
+            "Begin timestamp should be approximately preserved"
+        );
+        assert!(
+            (output_end_ts as i128 - end_ts as i128).abs() < 1000,
+            "End timestamp should be approximately preserved"
+        );
+    }
+
+    #[test]
+    #[should_panic(expected = "attempt to multiply with overflow")]
+    fn test_chrome_tracing_overflow_bug() {
+        // This test demonstrates the overflow bug when using very large timestamps
+        let mut collection = LinkedList::new();
+
+        // Use a timestamp that will overflow when multiplied by 1000
+        // u128::MAX / 1000 = 340282366920938463463374607431768211
+        // Anything larger than this will overflow
+        let large_timestamp: u128 = u128::MAX / 500; // This will overflow when multiplied by 1000
+
+        collection.push_back(("test_metric".to_string(), large_timestamp, 1000));
+
+        let metrics = TimedLikeMetrics {
+            duration_collection: collection,
+        };
+
+        // This should panic with overflow in debug mode
+        let _ = metrics.to_chrome_tracing();
+    }
+
+    #[test]
+    fn test_parse_full_chrome_trace_and_regenerate() {
+        // This test parses the FULL Chrome tracing JSON provided by the user
+        // and attempts to regenerate it, which should expose any overflow issues
+        let chrome_trace_input = r#"[{"cat":"PERF","name":"storage_config_new_dur","ph":"B","pid":"1","ts":1762455078689000},{"cat":"PERF","name":"storage_config_new_dur","ph":"E","pid":"1","ts":1762455078690000},{"cat":"PERF","name":"analyzer_new_dur","ph":"B","pid":"1","ts":1762455078691000},{"cat":"PERF","name":"analyzer_new_dur","ph":"E","pid":"1","ts":1762455078972000},{"cat":"PERF","name":"validate_connection_dur","ph":"B","pid":"1","ts":1762455078973000},{"cat":"PERF","name":"validate_connection_dur","ph":"E","pid":"1","ts":1762455080930000},{"cat":"PERF","name":"discover_partitions","ph":"B","pid":"1","ts":1762455080932000},{"cat":"PERF","name":"discover_partitions","ph":"E","pid":"1","ts":1762455081493000},{"cat":"PERF","name":"list_files_parallel","ph":"B","pid":"1","ts":1762455081495000},{"cat":"PERF","name":"list_files_parallel","ph":"E","pid":"1","ts":1762455082170000},{"cat":"PERF","name":"detect_table_type","ph":"B","pid":"1","ts":1762455082171000},{"cat":"PERF","name":"detect_table_type","ph":"E","pid":"1","ts":1762455082172000},{"cat":"PERF","name":"categorize_files","ph":"B","pid":"1","ts":1762455082173000},{"cat":"PERF","name":"categorize_files","ph":"E","pid":"1","ts":1762455082173000},{"cat":"PERF","name":"find_referenced_files","ph":"B","pid":"1","ts":1762455082174000},{"cat":"PERF","name":"find_referenced_files","ph":"E","pid":"1","ts":1762455082683000},{"cat":"PERF","name":"find_unreferenced_files","ph":"B","pid":"1","ts":1762455082684000},{"cat":"PERF","name":"find_unreferenced_files","ph":"E","pid":"1","ts":1762455082685000},{"cat":"PERF","name":"analyze_partitioning","ph":"B","pid":"1","ts":1762455082687000},{"cat":"PERF","name":"analyze_partitioning","ph":"E","pid":"1","ts":1762455082689000},{"cat":"PERF","name":"update_metrics_from_metadata","ph":"B","pid":"1","ts":1762455082689000},{"cat":"PERF","name":"update_metrics_from_metadata","ph":"E","pid":"1","ts":1762455083173000},{"cat":"PERF","name":"calculate_file_size_distribution","ph":"B","pid":"1","ts":1762455083175000},{"cat":"PERF","name":"calculate_file_size_distribution","ph":"E","pid":"1","ts":1762455083175000},{"cat":"PERF","name":"calculate_metadata_health","ph":"B","pid":"1","ts":1762455083176000},{"cat":"PERF","name":"calculate_metadata_health","ph":"E","pid":"1","ts":1762455083176000},{"cat":"PERF","name":"calculate_data_skew","ph":"B","pid":"1","ts":1762455083177000},{"cat":"PERF","name":"calculate_data_skew","ph":"E","pid":"1","ts":1762455083179000},{"cat":"PERF","name":"calculate_snapshot_health","ph":"B","pid":"1","ts":1762455083179000},{"cat":"PERF","name":"calculate_snapshot_health","ph":"E","pid":"1","ts":1762455083179000},{"cat":"PERF","name":"analyze_file_compaction","ph":"B","pid":"1","ts":1762455083180000},{"cat":"PERF","name":"analyze_file_compaction","ph":"E","pid":"1","ts":1762455083180000},{"cat":"PERF","name":"generate_recommendations","ph":"B","pid":"1","ts":1762455083181000},{"cat":"PERF","name":"generate_recommendations","ph":"E","pid":"1","ts":1762455083181000},{"cat":"PERF","name":"calculate_health_score","ph":"B","pid":"1","ts":1762455083182000},{"cat":"PERF","name":"calculate_health_score","ph":"E","pid":"1","ts":1762455083182000},{"cat":"PERF","name":"analyze_after_validation_dur","ph":"B","pid":"1","ts":1762455081495000},{"cat":"PERF","name":"analyze_after_validation_dur","ph":"E","pid":"1","ts":1762455083183000},{"cat":"PERF","name":"delta_reader","ph":"B","pid":"1","ts":1762455083183000},{"cat":"PERF","name":"delta_reader","ph":"E","pid":"1","ts":1762455085985000},{"cat":"PERF","name":"analyze_total_dur","ph":"B","pid":"1","ts":1762455078972000},{"cat":"PERF","name":"analyze_total_dur","ph":"E","pid":"1","ts":1762455085987000},{"cat":"PERF","name":"total_dur","ph":"B","pid":"1","ts":1762455078689000},{"cat":"PERF","name":"total_dur","ph":"E","pid":"1","ts":1762455085987000}]"#;
+
+        // Parse the Chrome tracing JSON
+        let events: Vec<serde_json::Value> =
+            serde_json::from_str(chrome_trace_input).expect("Failed to parse Chrome tracing JSON");
+
+        // Extract timing data from the parsed events
+        let mut timing_map: HashMap<String, (u128, u128)> = HashMap::new();
+
+        for event in &events {
+            let name = event["name"].as_str().expect("Event should have a name");
+            let ts = event["ts"].as_u64().expect("Event should have a timestamp") as u128;
+            let phase = event["ph"].as_str().expect("Event should have a phase");
+
+            if phase == "B" {
+                // Begin event - store start time (in microseconds)
+                timing_map.entry(name.to_string()).or_insert((ts, 0)).0 = ts;
+            } else if phase == "E" {
+                // End event - calculate duration (in microseconds)
+                if let Some(entry) = timing_map.get_mut(name) {
+                    entry.1 = ts - entry.0;
+                }
+            }
+        }
+
+        // Create TimedLikeMetrics from the parsed data
+        // Convert from microseconds to milliseconds for internal storage
+        let mut collection = LinkedList::new();
+        for (name, (start_ts_us, duration_us)) in timing_map.iter() {
+            collection.push_back((
+                name.clone(),
+                start_ts_us / 1000, // Convert microseconds to milliseconds
+                duration_us / 1000, // Convert microseconds to milliseconds
+            ));
+        }
+
+        let metrics = TimedLikeMetrics {
+            duration_collection: collection,
+        };
+
+        // Generate Chrome tracing output - this should work without overflow
+        let output = metrics
+            .to_chrome_tracing()
+            .expect("Should generate Chrome tracing output without overflow");
+
+        // Parse the generated output
+        let output_events: Vec<serde_json::Value> =
+            serde_json::from_str(&output).expect("Should parse generated output");
+
+        // Verify we have the correct number of events
+        assert_eq!(
+            output_events.len(),
+            44,
+            "Should have 44 events (22 metrics * 2)"
+        );
+
+        // Verify all expected metrics are present
+        let metric_names: std::collections::HashSet<String> = output_events
+            .iter()
+            .filter_map(|e| e["name"].as_str().map(String::from))
+            .collect();
+
+        assert!(metric_names.contains("storage_config_new_dur"));
+        assert!(metric_names.contains("analyzer_new_dur"));
+        assert!(metric_names.contains("validate_connection_dur"));
+        assert!(metric_names.contains("total_dur"));
+        assert!(metric_names.contains("delta_reader"));
+    }
+
+    #[test]
+    fn test_chrome_tracing_empty_metrics() {
+        let metrics = TimedLikeMetrics {
+            duration_collection: LinkedList::new(),
+        };
+
+        let output = metrics
+            .to_chrome_tracing()
+            .expect("Should handle empty metrics");
+
+        let events: Vec<serde_json::Value> =
+            serde_json::from_str(&output).expect("Should parse empty array");
+
+        assert_eq!(
+            events.len(),
+            0,
+            "Empty metrics should produce empty events array"
+        );
+    }
+
+    #[test]
+    fn test_chrome_tracing_single_metric() {
+        let mut collection = LinkedList::new();
+        collection.push_back(("test_metric".to_string(), 1000, 500));
+
+        let metrics = TimedLikeMetrics {
+            duration_collection: collection,
+        };
+
+        let output = metrics
+            .to_chrome_tracing()
+            .expect("Should generate output for single metric");
+
+        let events: Vec<serde_json::Value> =
+            serde_json::from_str(&output).expect("Should parse output");
+
+        assert_eq!(
+            events.len(),
+            2,
+            "Single metric should produce 2 events (B and E)"
+        );
+
+        // Verify Begin event
+        assert_eq!(events[0]["name"].as_str(), Some("test_metric"));
+        assert_eq!(events[0]["ph"].as_str(), Some("B"));
+        assert_eq!(events[0]["ts"].as_u64(), Some(1000000)); // 1000ms * 1000
+
+        // Verify End event
+        assert_eq!(events[1]["name"].as_str(), Some("test_metric"));
+        assert_eq!(events[1]["ph"].as_str(), Some("E"));
+        assert_eq!(events[1]["ts"].as_u64(), Some(1500000)); // (1000 + 500)ms * 1000
+    }
+
+    #[test]
+    fn test_chrome_tracing_duration_calculation() {
+        let mut collection = LinkedList::new();
+        // Add metrics with known durations
+        collection.push_back(("metric1".to_string(), 0, 100));
+        collection.push_back(("metric2".to_string(), 50, 200));
+        collection.push_back(("metric3".to_string(), 100, 50));
+
+        let metrics = TimedLikeMetrics {
+            duration_collection: collection,
+        };
+
+        let output = metrics.to_chrome_tracing().expect("Should generate output");
+
+        let events: Vec<serde_json::Value> =
+            serde_json::from_str(&output).expect("Should parse output");
+
+        // Should have 6 events (3 metrics * 2 events each)
+        assert_eq!(events.len(), 6);
+
+        // Verify metric1 duration
+        let metric1_begin = events
+            .iter()
+            .find(|e| e["name"] == "metric1" && e["ph"] == "B")
+            .expect("Should find metric1 begin");
+        let metric1_end = events
+            .iter()
+            .find(|e| e["name"] == "metric1" && e["ph"] == "E")
+            .expect("Should find metric1 end");
+
+        let duration = metric1_end["ts"].as_u64().unwrap() - metric1_begin["ts"].as_u64().unwrap();
+        assert_eq!(
+            duration, 100000,
+            "metric1 duration should be 100ms (100000 microseconds)"
+        );
+    }
+
+    /// This test documents the proper way to use Chrome tracing data with TimedLikeMetrics
+    ///
+    /// Chrome tracing format uses microseconds for timestamps, but TimedLikeMetrics
+    /// expects milliseconds internally and multiplies by 1000 when generating output.
+    ///
+    /// IMPORTANT: When parsing Chrome tracing JSON, you MUST divide timestamps by 1000
+    /// to convert from microseconds to milliseconds before storing in TimedLikeMetrics.
+    #[test]
+    fn test_chrome_tracing_format_documentation() {
+        // Chrome tracing uses microseconds
+        let chrome_ts_microseconds: u128 = 1762455078689000;
+
+        // TimedLikeMetrics expects milliseconds
+        let internal_ts_milliseconds: u128 = chrome_ts_microseconds / 1000;
+
+        // When to_chrome_tracing() is called, it multiplies by 1000 to get back to microseconds
+        let output_ts_microseconds: u128 = internal_ts_milliseconds * 1000;
+
+        // Verify the round-trip works correctly
+        assert_eq!(
+            chrome_ts_microseconds, output_ts_microseconds,
+            "Chrome tracing timestamps should round-trip correctly"
+        );
+
+        println!("Chrome tracing format:");
+        println!("  Input (microseconds):    {}", chrome_ts_microseconds);
+        println!("  Internal (milliseconds): {}", internal_ts_milliseconds);
+        println!("  Output (microseconds):   {}", output_ts_microseconds);
+    }
+
+    /// This test verifies that the ASCII Gantt chart bug is FIXED
+    /// It uses the ACTUAL Chrome tracing data with absolute timestamps
+    /// and should NOT panic after the fix to ascii_gantt.rs
+    #[test]
+    fn test_chrome_trace_with_absolute_timestamps_fixed() {
+        let chrome_trace_input = r#"[{"cat":"PERF","name":"storage_config_new_dur","ph":"B","pid":"1","ts":1762455078689000},{"cat":"PERF","name":"storage_config_new_dur","ph":"E","pid":"1","ts":1762455078690000},{"cat":"PERF","name":"analyzer_new_dur","ph":"B","pid":"1","ts":1762455078691000},{"cat":"PERF","name":"analyzer_new_dur","ph":"E","pid":"1","ts":1762455078972000},{"cat":"PERF","name":"validate_connection_dur","ph":"B","pid":"1","ts":1762455078973000},{"cat":"PERF","name":"validate_connection_dur","ph":"E","pid":"1","ts":1762455080930000},{"cat":"PERF","name":"discover_partitions","ph":"B","pid":"1","ts":1762455080932000},{"cat":"PERF","name":"discover_partitions","ph":"E","pid":"1","ts":1762455081493000},{"cat":"PERF","name":"list_files_parallel","ph":"B","pid":"1","ts":1762455081495000},{"cat":"PERF","name":"list_files_parallel","ph":"E","pid":"1","ts":1762455082170000},{"cat":"PERF","name":"detect_table_type","ph":"B","pid":"1","ts":1762455082171000},{"cat":"PERF","name":"detect_table_type","ph":"E","pid":"1","ts":1762455082172000},{"cat":"PERF","name":"categorize_files","ph":"B","pid":"1","ts":1762455082173000},{"cat":"PERF","name":"categorize_files","ph":"E","pid":"1","ts":1762455082173000},{"cat":"PERF","name":"find_referenced_files","ph":"B","pid":"1","ts":1762455082174000},{"cat":"PERF","name":"find_referenced_files","ph":"E","pid":"1","ts":1762455082683000},{"cat":"PERF","name":"find_unreferenced_files","ph":"B","pid":"1","ts":1762455082684000},{"cat":"PERF","name":"find_unreferenced_files","ph":"E","pid":"1","ts":1762455082685000},{"cat":"PERF","name":"analyze_partitioning","ph":"B","pid":"1","ts":1762455082687000},{"cat":"PERF","name":"analyze_partitioning","ph":"E","pid":"1","ts":1762455082689000},{"cat":"PERF","name":"update_metrics_from_metadata","ph":"B","pid":"1","ts":1762455082689000},{"cat":"PERF","name":"update_metrics_from_metadata","ph":"E","pid":"1","ts":1762455083173000},{"cat":"PERF","name":"calculate_file_size_distribution","ph":"B","pid":"1","ts":1762455083175000},{"cat":"PERF","name":"calculate_file_size_distribution","ph":"E","pid":"1","ts":1762455083175000},{"cat":"PERF","name":"calculate_metadata_health","ph":"B","pid":"1","ts":1762455083176000},{"cat":"PERF","name":"calculate_metadata_health","ph":"E","pid":"1","ts":1762455083176000},{"cat":"PERF","name":"calculate_data_skew","ph":"B","pid":"1","ts":1762455083177000},{"cat":"PERF","name":"calculate_data_skew","ph":"E","pid":"1","ts":1762455083179000},{"cat":"PERF","name":"calculate_snapshot_health","ph":"B","pid":"1","ts":1762455083179000},{"cat":"PERF","name":"calculate_snapshot_health","ph":"E","pid":"1","ts":1762455083179000},{"cat":"PERF","name":"analyze_file_compaction","ph":"B","pid":"1","ts":1762455083180000},{"cat":"PERF","name":"analyze_file_compaction","ph":"E","pid":"1","ts":1762455083180000},{"cat":"PERF","name":"generate_recommendations","ph":"B","pid":"1","ts":1762455083181000},{"cat":"PERF","name":"generate_recommendations","ph":"E","pid":"1","ts":1762455083181000},{"cat":"PERF","name":"calculate_health_score","ph":"B","pid":"1","ts":1762455083182000},{"cat":"PERF","name":"calculate_health_score","ph":"E","pid":"1","ts":1762455083182000},{"cat":"PERF","name":"analyze_after_validation_dur","ph":"B","pid":"1","ts":1762455081495000},{"cat":"PERF","name":"analyze_after_validation_dur","ph":"E","pid":"1","ts":1762455083183000},{"cat":"PERF","name":"delta_reader","ph":"B","pid":"1","ts":1762455083183000},{"cat":"PERF","name":"delta_reader","ph":"E","pid":"1","ts":1762455085985000},{"cat":"PERF","name":"analyze_total_dur","ph":"B","pid":"1","ts":1762455078972000},{"cat":"PERF","name":"analyze_total_dur","ph":"E","pid":"1","ts":1762455085987000},{"cat":"PERF","name":"total_dur","ph":"B","pid":"1","ts":1762455078689000},{"cat":"PERF","name":"total_dur","ph":"E","pid":"1","ts":1762455085987000}]"#;
+
+        // Parse the Chrome tracing JSON
+        let events: Vec<serde_json::Value> =
+            serde_json::from_str(chrome_trace_input).expect("Failed to parse Chrome tracing JSON");
+
+        // Extract timing data from the parsed events
+        let mut timing_map: HashMap<String, (u128, u128)> = HashMap::new();
+
+        for event in &events {
+            let name = event["name"].as_str().expect("Event should have a name");
+            let ts = event["ts"].as_u64().expect("Event should have a timestamp") as u128;
+            let phase = event["ph"].as_str().expect("Event should have a phase");
+
+            if phase == "B" {
+                timing_map.entry(name.to_string()).or_insert((ts, 0)).0 = ts;
+            } else if phase == "E" {
+                if let Some(entry) = timing_map.get_mut(name) {
+                    entry.1 = ts - entry.0;
+                }
+            }
+        }
+
+        // Create TimedLikeMetrics with ABSOLUTE timestamps (in milliseconds)
+        // This is the scenario that was causing the overflow bug
+        let mut collection = LinkedList::new();
+        for (name, (start_ts_us, duration_us)) in timing_map.iter() {
+            // Convert from microseconds to milliseconds
+            // These will be LARGE numbers like 1762455078689
+            collection.push_back((name.clone(), start_ts_us / 1000, duration_us / 1000));
+        }
+
+        let metrics = TimedLikeMetrics {
+            duration_collection: collection,
+        };
+
+        // This should NOW work without panic after the fix to ascii_gantt.rs
+        let gantt_output = metrics
+            .duration_collection_as_gantt(None)
+            .expect("Should generate ASCII Gantt chart with absolute timestamps after fix");
+
+        println!("\nASCII Gantt Chart with absolute timestamps:");
+        println!("{}", gantt_output);
+
+        // Verify the output contains expected metrics
+        assert!(gantt_output.contains("storage_config_new_dur"));
+        assert!(gantt_output.contains("analyzer_new_dur"));
+        assert!(gantt_output.contains("total_dur"));
+        assert!(gantt_output.contains("Timeline"));
+    }
+
+    /// This test parses the FULL Chrome tracing data and works correctly
+    /// by using RELATIVE timestamps (offset from the minimum) instead of absolute timestamps
+    #[test]
+    fn test_chrome_trace_with_relative_timestamps() {
+        let chrome_trace_input = r#"[{"cat":"PERF","name":"storage_config_new_dur","ph":"B","pid":"1","ts":1762455078689000},{"cat":"PERF","name":"storage_config_new_dur","ph":"E","pid":"1","ts":1762455078690000},{"cat":"PERF","name":"analyzer_new_dur","ph":"B","pid":"1","ts":1762455078691000},{"cat":"PERF","name":"analyzer_new_dur","ph":"E","pid":"1","ts":1762455078972000},{"cat":"PERF","name":"validate_connection_dur","ph":"B","pid":"1","ts":1762455078973000},{"cat":"PERF","name":"validate_connection_dur","ph":"E","pid":"1","ts":1762455080930000},{"cat":"PERF","name":"discover_partitions","ph":"B","pid":"1","ts":1762455080932000},{"cat":"PERF","name":"discover_partitions","ph":"E","pid":"1","ts":1762455081493000},{"cat":"PERF","name":"list_files_parallel","ph":"B","pid":"1","ts":1762455081495000},{"cat":"PERF","name":"list_files_parallel","ph":"E","pid":"1","ts":1762455082170000},{"cat":"PERF","name":"detect_table_type","ph":"B","pid":"1","ts":1762455082171000},{"cat":"PERF","name":"detect_table_type","ph":"E","pid":"1","ts":1762455082172000},{"cat":"PERF","name":"categorize_files","ph":"B","pid":"1","ts":1762455082173000},{"cat":"PERF","name":"categorize_files","ph":"E","pid":"1","ts":1762455082173000},{"cat":"PERF","name":"find_referenced_files","ph":"B","pid":"1","ts":1762455082174000},{"cat":"PERF","name":"find_referenced_files","ph":"E","pid":"1","ts":1762455082683000},{"cat":"PERF","name":"find_unreferenced_files","ph":"B","pid":"1","ts":1762455082684000},{"cat":"PERF","name":"find_unreferenced_files","ph":"E","pid":"1","ts":1762455082685000},{"cat":"PERF","name":"analyze_partitioning","ph":"B","pid":"1","ts":1762455082687000},{"cat":"PERF","name":"analyze_partitioning","ph":"E","pid":"1","ts":1762455082689000},{"cat":"PERF","name":"update_metrics_from_metadata","ph":"B","pid":"1","ts":1762455082689000},{"cat":"PERF","name":"update_metrics_from_metadata","ph":"E","pid":"1","ts":1762455083173000},{"cat":"PERF","name":"calculate_file_size_distribution","ph":"B","pid":"1","ts":1762455083175000},{"cat":"PERF","name":"calculate_file_size_distribution","ph":"E","pid":"1","ts":1762455083175000},{"cat":"PERF","name":"calculate_metadata_health","ph":"B","pid":"1","ts":1762455083176000},{"cat":"PERF","name":"calculate_metadata_health","ph":"E","pid":"1","ts":1762455083176000},{"cat":"PERF","name":"calculate_data_skew","ph":"B","pid":"1","ts":1762455083177000},{"cat":"PERF","name":"calculate_data_skew","ph":"E","pid":"1","ts":1762455083179000},{"cat":"PERF","name":"calculate_snapshot_health","ph":"B","pid":"1","ts":1762455083179000},{"cat":"PERF","name":"calculate_snapshot_health","ph":"E","pid":"1","ts":1762455083179000},{"cat":"PERF","name":"analyze_file_compaction","ph":"B","pid":"1","ts":1762455083180000},{"cat":"PERF","name":"analyze_file_compaction","ph":"E","pid":"1","ts":1762455083180000},{"cat":"PERF","name":"generate_recommendations","ph":"B","pid":"1","ts":1762455083181000},{"cat":"PERF","name":"generate_recommendations","ph":"E","pid":"1","ts":1762455083181000},{"cat":"PERF","name":"calculate_health_score","ph":"B","pid":"1","ts":1762455083182000},{"cat":"PERF","name":"calculate_health_score","ph":"E","pid":"1","ts":1762455083182000},{"cat":"PERF","name":"analyze_after_validation_dur","ph":"B","pid":"1","ts":1762455081495000},{"cat":"PERF","name":"analyze_after_validation_dur","ph":"E","pid":"1","ts":1762455083183000},{"cat":"PERF","name":"delta_reader","ph":"B","pid":"1","ts":1762455083183000},{"cat":"PERF","name":"delta_reader","ph":"E","pid":"1","ts":1762455085985000},{"cat":"PERF","name":"analyze_total_dur","ph":"B","pid":"1","ts":1762455078972000},{"cat":"PERF","name":"analyze_total_dur","ph":"E","pid":"1","ts":1762455085987000},{"cat":"PERF","name":"total_dur","ph":"B","pid":"1","ts":1762455078689000},{"cat":"PERF","name":"total_dur","ph":"E","pid":"1","ts":1762455085987000}]"#;
+
+        // Parse the Chrome tracing JSON
+        let events: Vec<serde_json::Value> =
+            serde_json::from_str(chrome_trace_input).expect("Failed to parse Chrome tracing JSON");
+
+        // Extract timing data from the parsed events
+        let mut timing_map: HashMap<String, (u128, u128)> = HashMap::new();
+
+        for event in &events {
+            let name = event["name"].as_str().expect("Event should have a name");
+            let ts = event["ts"].as_u64().expect("Event should have a timestamp") as u128;
+            let phase = event["ph"].as_str().expect("Event should have a phase");
+
+            if phase == "B" {
+                timing_map.entry(name.to_string()).or_insert((ts, 0)).0 = ts;
+            } else if phase == "E" {
+                if let Some(entry) = timing_map.get_mut(name) {
+                    entry.1 = ts - entry.0;
+                }
+            }
+        }
+
+        // Find the minimum timestamp to use as offset
+        let min_timestamp = timing_map
+            .values()
+            .map(|(start, _)| *start)
+            .min()
+            .unwrap_or(0);
+
+        println!("Min timestamp (microseconds): {}", min_timestamp);
+        println!("Min timestamp (milliseconds): {}", min_timestamp / 1000);
+
+        // Create TimedLikeMetrics with RELATIVE timestamps (offset from minimum)
+        let mut collection = LinkedList::new();
+        for (name, (start_ts_us, duration_us)) in timing_map.iter() {
+            // Use relative timestamps: subtract the minimum and convert to milliseconds
+            let relative_start_ms = (start_ts_us - min_timestamp) / 1000;
+            let duration_ms = duration_us / 1000;
+
+            collection.push_back((name.clone(), relative_start_ms, duration_ms));
+        }
+
+        let metrics = TimedLikeMetrics {
+            duration_collection: collection,
+        };
+
+        // Test Chrome tracing generation - should work fine
+        let chrome_output = metrics
+            .to_chrome_tracing()
+            .expect("Should generate Chrome tracing output");
+
+        let output_events: Vec<serde_json::Value> =
+            serde_json::from_str(&chrome_output).expect("Should parse output");
+
+        assert_eq!(output_events.len(), 44, "Should have 44 events");
+
+        // Test ASCII Gantt generation - should work now with relative timestamps
+        let gantt_output = metrics
+            .duration_collection_as_gantt(None)
+            .expect("Should generate ASCII Gantt chart with relative timestamps");
+
+        println!("\nASCII Gantt Chart:");
+        println!("{}", gantt_output);
+
+        // Verify the output contains expected metrics
+        assert!(gantt_output.contains("storage_config_new_dur"));
+        assert!(gantt_output.contains("analyzer_new_dur"));
+        assert!(gantt_output.contains("total_dur"));
     }
 }

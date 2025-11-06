@@ -46,7 +46,7 @@ impl DeltaReader {
 
         // Parse the URI
         let url = Url::parse(location)?;
-        
+
         // Build the table with storage options if provided
         let table = retry_with_max_retries(10, "open_table_with_storage_options", || async {
             open_table_with_storage_options(url.clone(), cleaned_storage_options.clone()).await

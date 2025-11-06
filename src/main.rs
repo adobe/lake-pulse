@@ -1,4 +1,3 @@
-use serde_json::Value;
 use std::error::Error;
 use std::fs::File;
 use std::io::Write;
@@ -10,7 +9,6 @@ mod delta;
 mod storage;
 mod util;
 
-use crate::analyze::metrics::TimedLikeMetrics;
 use analyze::Analyzer;
 use storage::StorageConfig;
 
@@ -55,51 +53,51 @@ async fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
     let mut report = analyzer.analyze(path).await?;
     let analyze_func_dur = analyze_func_start.elapsed()?;
 
-    report.timed_metrics.start_duration_collection.push_front((
+    report.timed_metrics.duration_collection.push_front((
         "analyzer_new_dur".to_string(),
         analyzer_new_start.duration_since(UNIX_EPOCH)?.as_millis(),
         analyzer_new_dur.as_millis(),
     ));
-    report.timed_metrics.start_duration_collection.push_front((
+    report.timed_metrics.duration_collection.push_front((
         "storage_config_new_dur".to_string(),
         general_start_time.duration_since(UNIX_EPOCH)?.as_millis(),
         storage_config_new_dur.as_millis(),
     ));
-    report.timed_metrics.start_duration_collection.push_back((
+    report.timed_metrics.duration_collection.push_back((
         "analyze_total_dur".to_string(),
         analyze_func_start.duration_since(UNIX_EPOCH)?.as_millis(),
         analyze_func_dur.as_millis(),
     ));
-    report.timed_metrics.start_duration_collection.push_back((
+    report.timed_metrics.duration_collection.push_back((
         "total_dur".to_string(),
         general_start_time.duration_since(UNIX_EPOCH)?.as_millis(),
         general_start_time.elapsed()?.as_millis(),
     ));
 
-    let chrome_tracing = Value::Array(report.timed_metrics.to_chrome_tracing()?);
     let mut times_human_readable: String = "".to_string();
     report
+        .clone()
         .timed_metrics
-        .start_duration_collection
+        .duration_collection
         .iter()
         .for_each(|(k, _, dur)| {
             times_human_readable = format!("{}\n{}: {}ms", times_human_readable, k, dur);
         });
-
-    report.timed_metrics = TimedLikeMetrics {
-        start_duration_collection: Default::default(),
-    };
-
+    
     // Write JSON to file
     let out_file_name = format!("{}.json", path.replace("/", "_"));
     let mut f = File::create(out_file_name)?;
     f.write_all(report.to_json(false)?.as_bytes())?;
 
-    println!("{}", report);
-    println!();
-    println!("{}", times_human_readable);
-    println!();
-    println!("{}", serde_json::to_string(&chrome_tracing)?);
+    println!("{}", report.clone());
+    // println!();
+    // println!("{}", times_human_readable);
+    // println!();
+    // println!("{}", report.timed_metrics.to_chrome_tracing()?);
+    println!(
+        "{}",
+        report.timed_metrics.duration_collection_as_gantt(None)?
+    );
 
     Ok(())
 }
