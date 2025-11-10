@@ -1,5 +1,6 @@
 use crate::analyze::delta::DeltaAnalyzer;
 use crate::analyze::iceberg::IcebergAnalyzer;
+use crate::analyze::lance::analyze::LanceAnalyzer;
 use crate::analyze::metrics::{
     FileCompactionMetrics, FileInfo, HealthMetrics, HealthReport, PartitionInfo, TimedLikeMetrics,
 };

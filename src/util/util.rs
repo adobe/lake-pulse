@@ -19,6 +19,16 @@ pub fn is_ndjson(content: &str) -> bool {
 }
 
 pub fn detect_table_type(objects: &Vec<FileMetadata>) -> String {
+    // Check for Lance: look for _versions directory and .lance files
+    // Lance tables have a _versions directory and data stored in .lance files
+    let has_versions_dir = objects.iter().any(|f| f.path.contains("/_versions/"));
+
+    let has_lance_files = objects.iter().any(|f| f.path.ends_with(".lance"));
+
+    if has_versions_dir || has_lance_files {
+        return "lance".to_string();
+    }
+
     // Check for Delta Lake: look for _delta_log directory
     if objects
         .into_iter()

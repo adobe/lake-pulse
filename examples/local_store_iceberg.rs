@@ -6,7 +6,7 @@ async fn main() {
     let analyzer = Analyzer::builder(storage_config).build().await.unwrap();
 
     // Generate report
-    let report = analyzer.analyze("dataset2").await.unwrap();
+    let report = analyzer.analyze("iceberg_dataset").await.unwrap();
 
     // Print pretty report
     println!("{}", report);

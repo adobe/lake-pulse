@@ -1,0 +1,85 @@
+{
+  "format-version" : 2,
+  "table-uuid" : "78c02dcd-591b-4d54-bebb-2e566a44b7d3",
+  "location" : "file:///Users/aionescu/git-adobe/AEP/lake-health/examples/data/iceberg_dataset",
+  "last-sequence-number" : 1,
+  "last-updated-ms" : 1762794091847,
+  "last-column-id" : 3,
+  "current-schema-id" : 0,
+  "schemas" : [ {
+    "type" : "struct",
+    "schema-id" : 0,
+    "fields" : [ {
+      "id" : 1,
+      "name" : "id",
+      "required" : true,
+      "type" : "int"
+    }, {
+      "id" : 2,
+      "name" : "f1",
+      "required" : false,
+      "type" : "string"
+    }, {
+      "id" : 3,
+      "name" : "f2",
+      "required" : false,
+      "type" : "string"
+    } ]
+  } ],
+  "default-spec-id" : 0,
+  "partition-specs" : [ {
+    "spec-id" : 0,
+    "fields" : [ ]
+  } ],
+  "last-partition-id" : 999,
+  "default-sort-order-id" : 0,
+  "sort-orders" : [ {
+    "order-id" : 0,
+    "fields" : [ ]
+  } ],
+  "properties" : {
+    "write.parquet.compression-codec" : "zstd"
+  },
+  "current-snapshot-id" : 5084338871067700571,
+  "refs" : {
+    "main" : {
+      "snapshot-id" : 5084338871067700571,
+      "type" : "branch"
+    }
+  },
+  "snapshots" : [ {
+    "sequence-number" : 1,
+    "snapshot-id" : 5084338871067700571,
+    "timestamp-ms" : 1762794091847,
+    "summary" : {
+      "operation" : "append",
+      "spark.app.id" : "local-1762793563943",
+      "added-data-files" : "1",
+      "added-records" : "20",
+      "added-files-size" : "992",
+      "changed-partition-count" : "1",
+      "total-records" : "20",
+      "total-files-size" : "992",
+      "total-data-files" : "1",
+      "total-delete-files" : "0",
+      "total-position-deletes" : "0",
+      "total-equality-deletes" : "0",
+      "engine-version" : "3.4.1",
+      "app-id" : "local-1762793563943",
+      "engine-name" : "spark",
+      "iceberg-version" : "Apache Iceberg 1.7.2 (commit c4e11060db443b0f3e5b70d25e7784f5a8991ad2)"
+    },
+    "manifest-list" : "file:/Users/aionescu/git-adobe/AEP/lake-health/examples/data/iceberg_dataset/metadata/snap-5084338871067700571-1-9ffeafc0-4d46-4dc4-9839-9bed6e0872f5.avro",
+    "schema-id" : 0
+  } ],
+  "statistics" : [ ],
+  "partition-statistics" : [ ],
+  "snapshot-log" : [ {
+    "timestamp-ms" : 1762794091847,
+    "snapshot-id" : 5084338871067700571
+  } ],
+  "metadata-log" : [ {
+    "timestamp-ms" : 1762794084031,
+    "metadata-file" : "file:/Users/aionescu/git-adobe/AEP/lake-health/examples/data/iceberg_dataset/metadata/v1.metadata.json"
+  } ]
+}

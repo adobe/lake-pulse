@@ -14,7 +14,7 @@ async fn main() {
     let analyzer = Analyzer::builder(storage_config).build().await.unwrap();
 
     // Generate report
-    let report = analyzer.analyze("dataset1").await.unwrap();
+    let report = analyzer.analyze("delta_dataset").await.unwrap();
 
     // Print as JSON
     println!("{}", report.to_json(false).unwrap());
