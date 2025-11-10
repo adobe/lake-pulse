@@ -27,7 +27,7 @@ impl IcebergReader {
     /// # Example
     ///
     /// ```no_run
-    /// use lake_health::reader::iceberg::reader::IcebergReader;
+    /// use lake_pulse::reader::iceberg::reader::IcebergReader;
     /// use std::collections::HashMap;
     ///
     /// # async fn example() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {

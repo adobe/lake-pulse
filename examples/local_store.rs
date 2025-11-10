@@ -1,4 +1,4 @@
-use lake_health::{Analyzer, StorageConfig};
+use lake_pulse::{Analyzer, StorageConfig};
 
 #[tokio::main]
 async fn main() {

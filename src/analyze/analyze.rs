@@ -26,8 +26,8 @@ use tracing::{info, warn};
 /// # Examples
 ///
 /// ```no_run
-/// use lake_health::analyze::Analyzer;
-/// use lake_health::storage::StorageConfig;
+/// use lake_pulse::analyze::Analyzer;
+/// use lake_pulse::storage::StorageConfig;
 ///
 /// # async fn example() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
 /// let storage_config = StorageConfig::local()
@@ -61,8 +61,8 @@ impl AnalyzerBuilder {
     /// # Examples
     ///
     /// ```no_run
-    /// use lake_health::analyze::analyze::AnalyzerBuilder;
-    /// use lake_health::storage::StorageConfig;
+    /// use lake_pulse::analyze::analyze::AnalyzerBuilder;
+    /// use lake_pulse::storage::StorageConfig;
     ///
     /// let config = StorageConfig::local().with_option("path", "/data");
     /// let builder = AnalyzerBuilder::new(config);
@@ -81,8 +81,8 @@ impl AnalyzerBuilder {
     /// * `parallelism` - The desired level of parallelism (number of concurrent tasks)
     ///
     /// ```no_run
-    /// use lake_health::analyze::analyze::AnalyzerBuilder;
-    /// use lake_health::storage::StorageConfig;
+    /// use lake_pulse::analyze::analyze::AnalyzerBuilder;
+    /// use lake_pulse::storage::StorageConfig;
     ///
     /// let config = StorageConfig::local().with_option("path", "/data");
     /// let builder = AnalyzerBuilder::new(config).with_parallelism(10);
@@ -105,8 +105,8 @@ impl AnalyzerBuilder {
     /// # Examples
     ///
     /// ```no_run
-    /// use lake_health::analyze::Analyzer;
-    /// use lake_health::storage::StorageConfig;
+    /// use lake_pulse::analyze::Analyzer;
+    /// use lake_pulse::storage::StorageConfig;
     ///
     /// # async fn example() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     /// let config = StorageConfig::local().with_option("path", "/data");
@@ -144,8 +144,8 @@ impl Analyzer {
     /// # Examples
     ///
     /// ```no_run
-    /// use lake_health::analyze::Analyzer;
-    /// use lake_health::storage::StorageConfig;
+    /// use lake_pulse::analyze::Analyzer;
+    /// use lake_pulse::storage::StorageConfig;
     ///
     /// # async fn example() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     /// let config = StorageConfig::local().with_option("path", "/data");

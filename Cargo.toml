@@ -1,5 +1,5 @@
 [package]
-name = "lake-health"
+name = "lake-pulse"
 version = "0.1.0"
 edition = "2024"
 
@@ -17,8 +17,6 @@ deltalake-azure = "0.12"
 deltalake-aws = "0.12"
 iceberg = { version = "0.7.0", features = ["storage-all"] }
 lance = "0.39"
-lance-core = "0.39"
-lance-io = "0.39"
 
 object_store = { version = "0.12", features = ["aws", "azure", "gcp"] }
 url = "2.5"
@@ -29,12 +27,6 @@ bytes = "1.0"
 chrono = "0.4"
 log = "0.4.28"
 regex = "1.12.2"
-arrow = "56"
-arrow-array = "56"
-arrow-schema = "56"
-parquet = "56"
-uuid = { version = "1.0", features = ["v4"] }
-
 
 
 

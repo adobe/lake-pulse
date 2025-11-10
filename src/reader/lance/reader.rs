@@ -19,7 +19,7 @@ impl LanceReader {
     /// # Example
     ///
     /// ```no_run
-    /// use lake_health::reader::lance::reader::LanceReader;
+    /// use lake_pulse::reader::lance::reader::LanceReader;
     ///
     /// # async fn example() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     /// let reader = LanceReader::open("/path/to/lance/table").await?;

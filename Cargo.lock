@@ -3591,12 +3591,9 @@ dependencies = [
 ]
 
 [[package]]
-name = "lake-health"
+name = "lake-pulse"
 version = "0.1.0"
 dependencies = [
- "arrow",
- "arrow-array 56.2.0",
- "arrow-schema 56.2.0",
  "async-trait",
  "bytes",
  "chrono",
@@ -3606,11 +3603,8 @@ dependencies = [
  "futures",
  "iceberg",
  "lance",
- "lance-core",
- "lance-io",
  "log",
  "object_store",
- "parquet 56.2.0",
  "regex",
  "serde",
  "serde_json",
@@ -3619,7 +3613,6 @@ dependencies = [
  "tracing",
  "tracing-subscriber",
  "url",
- "uuid",
 ]
 
 [[package]]
