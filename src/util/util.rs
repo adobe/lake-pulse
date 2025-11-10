@@ -47,6 +47,15 @@ pub fn detect_table_type(objects: &Vec<FileMetadata>) -> String {
         return "iceberg".to_string();
     }
 
+    // Check for Hudi: look for .hoodie directory
+    if objects
+        .into_iter()
+        .find(|f| f.path.contains("/.hoodie/"))
+        .is_some()
+    {
+        return "hudi".to_string();
+    }
+
     "unknown".to_string()
 }
 

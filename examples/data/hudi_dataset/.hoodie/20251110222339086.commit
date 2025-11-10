@@ -1,0 +1,38 @@
+{
+  "partitionToWriteStats" : {
+    "" : [ {
+      "fileId" : "4873e419-5ff3-4f61-b3ce-5c852cee4583-0",
+      "path" : "4873e419-5ff3-4f61-b3ce-5c852cee4583-0_0-52-250_20251110222339086.parquet",
+      "cdcStats" : null,
+      "prevCommit" : "20251110222213846",
+      "numWrites" : 121,
+      "numDeletes" : 0,
+      "numUpdateWrites" : 0,
+      "numInserts" : 101,
+      "totalWriteBytes" : 435798,
+      "totalWriteErrors" : 0,
+      "tempPath" : null,
+      "partitionPath" : "",
+      "totalLogRecords" : 0,
+      "totalLogFilesCompacted" : 0,
+      "totalLogSizeCompacted" : 0,
+      "totalUpdatedRecordsCompacted" : 0,
+      "totalLogBlocks" : 0,
+      "totalCorruptLogBlock" : 0,
+      "totalRollbackBlocks" : 0,
+      "fileSizeInBytes" : 435798,
+      "minEventTime" : null,
+      "maxEventTime" : null,
+      "runtimeStats" : {
+        "totalScanTime" : 0,
+        "totalUpsertTime" : 192,
+        "totalCreateTime" : 0
+      }
+    } ]
+  },
+  "compacted" : false,
+  "extraMetadata" : {
+    "schema" : "{\"type\":\"record\",\"name\":\"hudi_test_table_record\",\"namespace\":\"hoodie.hudi_test_table\",\"fields\":[{\"name\":\"id\",\"type\":\"int\"},{\"name\":\"f1\",\"type\":[\"null\",\"string\"],\"default\":null},{\"name\":\"f2\",\"type\":[\"null\",\"string\"],\"default\":null}]}"
+  },
+  "operationType" : "UPSERT"
+}

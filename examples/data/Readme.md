@@ -162,9 +162,89 @@ spark-shell \
 --conf spark.sql.catalogImplementation=in-memory
 ```
 
+## Apache Hudi
+
+First, set your absolute path where you want to create the dataset:
+
+```scala
+val absolutePath =
+    new java.io.File("data/hudi_dataset").getAbsolutePath
+```
+
+```scala
+import org.apache.hudi.QuickstartUtils._
+import scala.collection.JavaConverters._
+import org.apache.spark.sql.SaveMode._
+import org.apache.hudi.DataSourceReadOptions._
+import org.apache.hudi.DataSourceWriteOptions._
+import org.apache.hudi.config.HoodieWriteConfig._
+
+// Create initial dataset
+val s = (1 to 20 map { case(i) =>
+    (i, s"a-$i", s"${i*2}")
+}).toDF
+    .withColumnRenamed("_1", "id")
+    .withColumnRenamed("_2", "f1")
+    .withColumnRenamed("_3", "f2")
+
+val tableName = "hudi_test_table"
+
+// Write initial data as COPY_ON_WRITE table
+s.write.format("hudi")
+    .option(PRECOMBINE_FIELD_OPT_KEY, "id")
+    .option(RECORDKEY_FIELD_OPT_KEY, "id")
+    .option(TABLE_NAME, tableName)
+    .option(TABLE_TYPE_OPT_KEY, "COPY_ON_WRITE")
+    .mode(Overwrite)
+    .save(s"file://$absolutePath")
+
+// Append more data
+val s2 = (100 to 200 map { case(i) =>
+    (i, s"a-$i", s"${i*2}")
+}).toDF
+    .withColumnRenamed("_1", "id")
+    .withColumnRenamed("_2", "f1")
+    .withColumnRenamed("_3", "f2")
+
+s2.write.format("hudi")
+    .option(PRECOMBINE_FIELD_OPT_KEY, "id")
+    .option(RECORDKEY_FIELD_OPT_KEY, "id")
+    .option(TABLE_NAME, tableName)
+    .option(TABLE_TYPE_OPT_KEY, "COPY_ON_WRITE")
+    .mode(Append)
+    .save(s"file://$absolutePath")
+
+// Update some records (Hudi will handle upserts)
+val s3 = (100 to 110 map { case(i) =>
+    (i, s"updated-$i", s"${i*3}")
+}).toDF
+    .withColumnRenamed("_1", "id")
+    .withColumnRenamed("_2", "f1")
+    .withColumnRenamed("_3", "f2")
+
+s3.write.format("hudi")
+    .option(PRECOMBINE_FIELD_OPT_KEY, "id")
+    .option(RECORDKEY_FIELD_OPT_KEY, "id")
+    .option(TABLE_NAME, tableName)
+    .option(TABLE_TYPE_OPT_KEY, "COPY_ON_WRITE")
+    .mode(Append)
+    .save(s"file://$absolutePath")
+```
+
+Spark Shell Command:
+
+```bash
+spark-shell \
+--driver-memory 8g \
+--packages "org.apache.hudi:hudi-spark3.4-bundle_2.12:0.15.0" \
+--conf spark.serializer=org.apache.spark.serializer.KryoSerializer \
+--conf spark.sql.catalog.spark_catalog=org.apache.spark.sql.hudi.catalog.HoodieCatalog \
+--conf spark.sql.extensions=org.apache.spark.sql.hudi.HoodieSparkSessionExtension
+```
+
 ## Lance
 
-This will work based on the setup and the root location for the catalog, 
+This will work based on the setup and the root location for the catalog,
 meaning the `spark.sql.catalog.lance.root=file://$DATA_DIR` setting.
 
 ```scala

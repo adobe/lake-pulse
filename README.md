@@ -8,7 +8,7 @@
 /_____/\__,_/_/|_|\___/  /_/    \__,_/_/____/\___/ 
 
 ```
-A Rust library for analyzing data lake table health across multiple formats (Delta Lake, Apache Iceberg, Lance) and storage providers (AWS S3, Azure Data Lake, GCS, Local).
+A Rust library for analyzing data lake table health across multiple formats (Delta Lake, Apache Iceberg, Apache Hudi, Lance) and storage providers (AWS S3, Azure Data Lake, GCS, Local).
 
 ## Overview
 
@@ -49,6 +49,7 @@ async fn main() {
 
 - **Delta Lake** - Full support for transaction logs, deletion vectors, and Delta-specific metrics
 - **Apache Iceberg** - Metadata analysis, snapshot management, and Iceberg-specific features
+- **Apache Hudi** - Basic support for Hudi table structure analysis and metrics
 - **Lance** - Modern columnar format with vector search capabilities
 
 ## Storage Configuration
@@ -95,6 +96,7 @@ See the [`examples/`](examples/) directory for more detailed usage examples:
 - `adl_store.rs` - Azure Data Lake example
 - `local_store.rs` - Local filesystem example
 - `local_store_iceberg.rs` - Iceberg table example
+- `local_store_hudi.rs` - Hudi table example
 - `local_store_lance.rs` - Lance table example
 
 Run examples with:

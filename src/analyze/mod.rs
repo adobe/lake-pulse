@@ -1,5 +1,6 @@
 pub mod analyze;
 pub mod delta;
+pub mod hudi;
 pub mod iceberg;
 pub mod lance;
 pub mod metrics;

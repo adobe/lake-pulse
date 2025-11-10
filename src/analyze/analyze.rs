@@ -1,4 +1,5 @@
 use crate::analyze::delta::DeltaAnalyzer;
+use crate::analyze::hudi::HudiAnalyzer;
 use crate::analyze::iceberg::IcebergAnalyzer;
 use crate::analyze::lance::analyze::LanceAnalyzer;
 use crate::analyze::metrics::{
@@ -6,6 +7,7 @@ use crate::analyze::metrics::{
 };
 use crate::analyze::table_analyzer::TableAnalyzer;
 use crate::reader::delta::reader::DeltaReader;
+use crate::reader::hudi::reader::HudiReader;
 use crate::reader::iceberg::reader::IcebergReader;
 use crate::storage::{FileMetadata, StorageConfig, StorageProvider, StorageProviderFactory};
 use crate::util::util::{
@@ -218,6 +220,10 @@ impl Analyzer {
         // Instantiate the appropriate table analyzer based on detected type
         let table_analyzer: Arc<dyn TableAnalyzer> = match table_type.as_str() {
             "delta" => Arc::new(DeltaAnalyzer::new(
+                Arc::clone(&self.storage_provider),
+                self.parallelism,
+            )),
+            "hudi" => Arc::new(HudiAnalyzer::new(
                 Arc::clone(&self.storage_provider),
                 self.parallelism,
             )),
@@ -472,6 +478,31 @@ impl Analyzer {
                     }
                 },
                 Some(|_| "Opened Iceberg reader".to_string()),
+            )
+            .await?;
+        } else if table_type == "hudi" {
+            measure_dur_async(
+                "hudi_reader",
+                &mut internal_metrics,
+                || async {
+                    let hudi_reader = HudiReader::new(
+                        self.storage_provider.uri_from_path(location).as_str(),
+                        "COPY_ON_WRITE", // Default to COW, could be detected from hoodie.properties
+                    );
+
+                    match hudi_reader {
+                        Ok(reader) => {
+                            metrics.hudi_table_specific_metrics =
+                                Some(reader.extract_metrics().await?);
+                            Ok(())
+                        }
+                        Err(e) => {
+                            warn!("Failed to open Hudi reader: {}", e);
+                            Err(e)
+                        }
+                    }
+                },
+                Some(|_| "Opened Hudi reader".to_string()),
             )
             .await?;
         }

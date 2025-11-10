@@ -1,4 +1,5 @@
 use crate::reader::delta::metrics::DeltaMetrics;
+use crate::reader::hudi::metrics::HudiMetrics;
 use crate::reader::iceberg::metrics::IcebergMetrics;
 use crate::util::ascii_gantt::GanttConfig;
 use crate::util::ascii_gantt::to_ascii_gantt;
@@ -114,6 +115,7 @@ pub struct HealthMetrics {
     pub table_constraints: Option<TableConstraintsMetrics>,
     pub file_compaction: Option<FileCompactionMetrics>,
     pub delta_table_specific_metrics: Option<DeltaMetrics>,
+    pub hudi_table_specific_metrics: Option<HudiMetrics>,
     pub iceberg_table_specific_metrics: Option<IcebergMetrics>,
 }
 
@@ -423,16 +425,11 @@ impl Display for HealthReport {
                 writeln!(f, "  Wasted: {:.2} MB", wasted_mb)?;
             }
 
-            let table_type_name = if report.table_type == "delta" {
-                "Delta transaction log"
-            } else {
-                "Iceberg manifest files"
-            };
             writeln!(
                 f,
                 "\n  These files exist in storage but are not referenced in the"
             )?;
-            writeln!(f, "  {}. Consider cleaning them up.", table_type_name)?;
+            writeln!(f, "  {} table metadata. Consider cleaning them up.", report.table_type)?;
         }
 
         // Deletion vector metrics (Delta Lake only)
@@ -920,6 +917,7 @@ impl HealthMetrics {
             table_constraints: None,
             file_compaction: None,
             delta_table_specific_metrics: None,
+            hudi_table_specific_metrics: None,
             iceberg_table_specific_metrics: None,
         }
     }
