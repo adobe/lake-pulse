@@ -1,7 +1,15 @@
 [package]
 name = "lake-pulse"
 version = "0.1.0"
-edition = "2024"
+edition = "2021"
+license = "MIT OR Apache-2.0"
+readme = "README.md"
+description = "A Rust library for analyzing data lake table health across multiple formats and storage providers."
+rust-version = "1.88"
+keywords = ["lake", "pulse", "analyze"]
+authors = ["Andrei Ionescu <aionescu@adobe.com>"]
+repository = "https://github.com/aionescu_adobe/lake-pulse"
+exclude = [ "examples/data/**/*" ]
 
 [dependencies]
 tokio = { version = "1", features = ["full"] }

@@ -11,6 +11,7 @@ use object_store::{
 };
 use regex::Regex;
 use std::collections::HashMap;
+use std::future::Future;
 use std::fmt::{Debug, Formatter};
 use std::path::PathBuf;
 use std::sync::Arc;
