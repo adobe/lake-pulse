@@ -1,8 +1,10 @@
 /target
 /debug
 /cluster-logs
+dont_commit*
 .env
 .idea
 .DS_Store
 *.sled
 *.db
+Cargo.lock
