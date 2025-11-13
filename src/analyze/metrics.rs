@@ -10,49 +10,96 @@ use std::collections::{HashMap, LinkedList};
 use std::error::Error;
 use std::fmt::{Display, Formatter, Result as FmtResult};
 
+/// Information about a single file in the data lake table.
+///
+/// Contains metadata about a file including its path, size, modification time,
+/// and whether it's referenced by the table metadata.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FileInfo {
+    /// The full path to the file
     pub path: String,
+    /// Size of the file in bytes
     pub size_bytes: u64,
+    /// Last modification timestamp (ISO 8601 format)
     pub last_modified: Option<String>,
+    /// Whether this file is referenced in the table metadata
     pub is_referenced: bool,
 }
 
+/// Information about a table partition.
+///
+/// Contains aggregated metrics for a single partition including file counts,
+/// sizes, and the list of files within the partition.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PartitionInfo {
+    /// Partition key-value pairs (e.g., {"year": "2024", "month": "01"})
     pub partition_values: HashMap<String, String>,
+    /// Number of files in this partition
     pub file_count: usize,
+    /// Total size of all files in this partition (bytes)
     pub total_size_bytes: u64,
+    /// Average file size in this partition (bytes)
     pub avg_file_size_bytes: f64,
+    /// List of files in this partition
     pub files: Vec<FileInfo>,
 }
 
+/// Clustering information for Iceberg tables.
+///
+/// Iceberg supports clustering data by specific columns to improve
+/// query performance through data locality.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ClusteringInfo {
+    /// Columns used for clustering
     pub clustering_columns: Vec<String>,
+    /// Number of clusters in the table
     pub cluster_count: usize,
+    /// Average number of files per cluster
     pub avg_files_per_cluster: f64,
+    /// Average cluster size (bytes)
     pub avg_cluster_size_bytes: f64,
 }
 
+/// Metrics for Delta Lake deletion vectors.
+///
+/// Deletion vectors are a Delta Lake feature that allows marking rows as deleted
+/// without rewriting data files. High deletion vector usage may indicate a need
+/// for compaction.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DeletionVectorMetrics {
+    /// Number of deletion vectors in the table
     pub deletion_vector_count: usize,
+    /// Total size of all deletion vectors (bytes)
     pub total_deletion_vector_size_bytes: u64,
+    /// Average deletion vector size (bytes)
     pub avg_deletion_vector_size_bytes: f64,
+    /// Age of the oldest deletion vector (days)
     pub deletion_vector_age_days: f64,
+    /// Total number of deleted rows tracked by deletion vectors
     pub deleted_rows_count: u64,
-    pub deletion_vector_impact_score: f64, // 0.0 = no impact, 1.0 = high impact
+    /// Impact score: 0.0 (no impact) to 1.0 (high impact, compaction recommended)
+    pub deletion_vector_impact_score: f64,
 }
 
+/// Metrics tracking schema evolution over time.
+///
+/// Monitors how the table schema has changed, helping identify schema stability
+/// and potential compatibility issues.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SchemaEvolutionMetrics {
+    /// Total number of schema changes
     pub total_schema_changes: usize,
+    /// Number of breaking schema changes
     pub breaking_changes: usize,
+    /// Number of non-breaking schema changes
     pub non_breaking_changes: usize,
-    pub schema_stability_score: f64, // 0.0 = unstable, 1.0 = very stable
+    /// Schema stability score: 0.0 (unstable) to 1.0 (very stable)
+    pub schema_stability_score: f64,
+    /// Days since the last schema change
     pub days_since_last_change: f64,
-    pub schema_change_frequency: f64, // changes per day
+    /// Schema change frequency (changes per day)
+    pub schema_change_frequency: f64,
+    /// Current schema version number
     pub current_schema_version: u64,
 }
 
@@ -93,47 +140,103 @@ pub struct FileCompactionMetrics {
     pub z_order_columns: Vec<String>,
 }
 
+/// Comprehensive health metrics for a data lake table.
+///
+/// This struct contains all the metrics collected during table analysis,
+/// including file statistics, partition information, data quality metrics,
+/// and format-specific metrics.
+///
+/// # Examples
+///
+/// ```no_run
+/// use lake_pulse::analyze::metrics::HealthMetrics;
+///
+/// let mut metrics = HealthMetrics::new();
+/// metrics.calculate_data_skew();
+/// let score = metrics.calculate_health_score();
+/// println!("Health score: {:.2}", score);
+/// ```
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct HealthMetrics {
+    /// Total number of data files in the table
     pub total_files: usize,
+    /// Total size of all data files (bytes)
     pub total_size_bytes: u64,
+    /// List of files not referenced in table metadata
     pub unreferenced_files: Vec<FileInfo>,
+    /// Total size of unreferenced files (bytes)
     pub unreferenced_size_bytes: u64,
+    /// Number of partitions in the table
     pub partition_count: usize,
+    /// Detailed information about each partition
     pub partitions: Vec<PartitionInfo>,
+    /// Clustering information (Iceberg-specific)
     pub clustering: Option<ClusteringInfo>,
+    /// Average file size across all files (bytes)
     pub avg_file_size_bytes: f64,
+    /// Distribution of files by size category
     pub file_size_distribution: FileSizeDistribution,
+    /// List of actionable recommendations
     pub recommendations: Vec<String>,
+    /// Overall health score (0.0 to 1.0, higher is better)
     pub health_score: f64,
+    /// Data skew metrics
     pub data_skew: DataSkewMetrics,
+    /// Metadata health metrics
     pub metadata_health: MetadataHealth,
+    /// Snapshot health metrics
     pub snapshot_health: SnapshotHealth,
+    /// Deletion vector metrics (Delta-specific)
     pub deletion_vector_metrics: Option<DeletionVectorMetrics>,
+    /// Schema evolution metrics
     pub schema_evolution: Option<SchemaEvolutionMetrics>,
+    /// Time travel metrics
     pub time_travel_metrics: Option<TimeTravelMetrics>,
+    /// Table constraints metrics
     pub table_constraints: Option<TableConstraintsMetrics>,
+    /// File compaction opportunity metrics
     pub file_compaction: Option<FileCompactionMetrics>,
+    /// Delta Lake specific metrics
     pub delta_table_specific_metrics: Option<DeltaMetrics>,
+    /// Apache Hudi specific metrics
     pub hudi_table_specific_metrics: Option<HudiMetrics>,
+    /// Apache Iceberg specific metrics
     pub iceberg_table_specific_metrics: Option<IcebergMetrics>,
 }
 
+/// Distribution of files by size category.
+///
+/// Categorizes files into size buckets to help identify potential
+/// performance issues from too many small files or very large files.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FileSizeDistribution {
-    pub small_files: usize,      // < 16MB
-    pub medium_files: usize,     // 16MB - 128MB
-    pub large_files: usize,      // 128MB - 1GB
-    pub very_large_files: usize, // > 1GB
+    /// Number of small files (< 16MB)
+    pub small_files: usize,
+    /// Number of medium files (16MB - 128MB)
+    pub medium_files: usize,
+    /// Number of large files (128MB - 1GB)
+    pub large_files: usize,
+    /// Number of very large files (> 1GB)
+    pub very_large_files: usize,
 }
 
+/// Metrics for detecting data skew in partitions and file sizes.
+///
+/// Data skew can lead to performance issues where some tasks process
+/// significantly more data than others.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DataSkewMetrics {
-    pub partition_skew_score: f64, // 0.0 (perfect) to 1.0 (highly skewed)
-    pub file_size_skew_score: f64, // 0.0 (perfect) to 1.0 (highly skewed)
+    /// Partition skew score: 0.0 (perfectly balanced) to 1.0 (highly skewed)
+    pub partition_skew_score: f64,
+    /// File size skew score: 0.0 (uniform sizes) to 1.0 (highly varied)
+    pub file_size_skew_score: f64,
+    /// Size of the largest partition (bytes)
     pub largest_partition_size: u64,
+    /// Size of the smallest partition (bytes)
     pub smallest_partition_size: u64,
+    /// Average partition size (bytes)
     pub avg_partition_size: u64,
+    /// Standard deviation of partition sizes
     pub partition_size_std_dev: f64,
 }
 
@@ -157,18 +260,74 @@ pub struct SnapshotHealth {
     pub snapshot_retention_risk: f64, // 0.0 (good) to 1.0 (high risk)
 }
 
+/// Complete health report for a data lake table.
+///
+/// This is the main output of the analysis process, containing all metrics,
+/// recommendations, and timing information.
+///
+/// # Examples
+///
+/// ```no_run
+/// use lake_pulse::{Analyzer, StorageConfig};
+///
+/// # async fn example() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+/// let config = StorageConfig::local()
+///     .with_option("path", "./examples/data");
+///
+/// let analyzer = Analyzer::builder(config)
+///     .build()
+///     .await?;
+///
+/// let report = analyzer.analyze("delta_dataset").await?;
+///
+/// // Print the report
+/// println!("{}", report);
+///
+/// // Export to JSON
+/// let json = report.to_json(false)?;
+/// println!("{}", json);
+/// # Ok(())
+/// # }
+/// ```
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct HealthReport {
+    /// Path to the analyzed table
     pub table_path: String,
-    pub table_type: String, // "delta" or "iceberg"
+    /// Table format type ("delta", "iceberg", "hudi", or "lance")
+    pub table_type: String,
+    /// Timestamp when the analysis was performed (ISO 8601 format)
     pub analysis_timestamp: String,
+    /// Comprehensive health metrics
     pub metrics: HealthMetrics,
-    pub health_score: f64, // 0.0 to 1.0
+    /// Overall health score (0.0 to 1.0, higher is better)
+    pub health_score: f64,
+    /// Performance timing metrics
     pub timed_metrics: TimedLikeMetrics,
 }
 
+/// Performance timing metrics for analysis operations.
+///
+/// Tracks the duration of various operations during table analysis,
+/// useful for performance profiling and optimization.
+///
+/// # Examples
+///
+/// ```no_run
+/// use lake_pulse::analyze::metrics::TimedLikeMetrics;
+///
+/// # fn example(metrics: &TimedLikeMetrics) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+/// // Export to Chrome tracing format
+/// let tracing_json = metrics.to_chrome_tracing()?;
+///
+/// // Generate ASCII Gantt chart
+/// let gantt = metrics.duration_collection_as_gantt(None)?;
+/// println!("{}", gantt);
+/// # Ok(())
+/// # }
+/// ```
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TimedLikeMetrics {
+    /// Collection of (operation_name, start_time_micros, duration_micros) tuples
     pub duration_collection: LinkedList<(String, u128, u128)>,
 }
 
