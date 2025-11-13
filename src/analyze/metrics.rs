@@ -230,622 +230,845 @@ impl Display for HealthReport {
     fn fmt(&self, f: &mut Formatter<'_>) -> FmtResult {
         let report = self;
 
-        writeln!(f, "\n{}", "=".repeat(60))?;
-        writeln!(f, "Table Health Report: {}", report.table_path)?;
-        writeln!(f, "Type: {}", report.table_type)?;
-        writeln!(f, "Analysis Time: {}", report.analysis_timestamp)?;
-        writeln!(f, "{}\n", "=".repeat(60))?;
-
-        // Overall health score
-        let health_emoji = if report.health_score > 0.8 {
-            "🟢"
-        } else if report.health_score > 0.6 {
-            "🟡"
-        } else {
-            "🔴"
-        };
+        // Header (no vertical borders for path to allow longer paths)
+        writeln!(f, "\n{}", "━".repeat(80))?;
         writeln!(
             f,
-            "{} Overall Health Score: {:.1}%",
-            health_emoji,
+            " {:<60} Score: {:>5.1}% ",
+            "Table Health Report",
             report.health_score * 100.0
         )?;
+        writeln!(f, "{}", "━".repeat(80))?;
+        writeln!(f, " {}", report.table_path)?;
+        writeln!(f, " {} ({})", report.analysis_timestamp, report.table_type)?;
+        writeln!(f, "{}", "━".repeat(80))?;
 
-        // Key metrics
-        writeln!(f, "\n📊 Key Metrics:")?;
-        writeln!(f, "{}", "─".repeat(60))?;
-        writeln!(f, "  Total Files:         {}", report.metrics.total_files)?;
+        // Key Metrics and File Size Distribution (side by side)
+        writeln!(f)?;
+        writeln!(f, " {:<41} {}", "Key Metrics", "File Size Distribution")?;
+        writeln!(f, "{}", "━".repeat(80))?;
 
-        // Format size in GB or MB
-        let size_gb = report.metrics.total_size_bytes as f64 / (1024.0 * 1024.0 * 1024.0);
-        if size_gb >= 1.0 {
-            writeln!(f, "  Total Size:          {:.2} GB", size_gb)?;
-        } else {
-            let size_mb = report.metrics.total_size_bytes as f64 / (1024.0 * 1024.0);
-            writeln!(f, "  Total Size:          {:.2} MB", size_mb)?;
-        }
-
-        // Average file size
-        let avg_mb = report.metrics.avg_file_size_bytes / (1024.0 * 1024.0);
-        writeln!(f, "  Average File Size:   {:.2} MB", avg_mb)?;
-        writeln!(
-            f,
-            "  Partition Count:     {}",
-            report.metrics.partition_count
-        )?;
-
-        // File size distribution
-        writeln!(f, "\n📦 File Size Distribution:")?;
-        writeln!(f, "{}", "─".repeat(60))?;
         let dist = &report.metrics.file_size_distribution;
         let total_files =
             (dist.small_files + dist.medium_files + dist.large_files + dist.very_large_files)
                 as f64;
 
-        if total_files > 0.0 {
-            writeln!(
-                f,
-                "  Small (<16MB):       {:>6} files ({:>5.1}%)",
-                dist.small_files,
-                dist.small_files as f64 / total_files * 100.0
-            )?;
-            writeln!(
-                f,
-                "  Medium (16-128MB):   {:>6} files ({:>5.1}%)",
-                dist.medium_files,
-                dist.medium_files as f64 / total_files * 100.0
-            )?;
-            writeln!(
-                f,
-                "  Large (128MB-1GB):   {:>6} files ({:>5.1}%)",
-                dist.large_files,
-                dist.large_files as f64 / total_files * 100.0
-            )?;
-            writeln!(
-                f,
-                "  Very Large (>1GB):   {:>6} files ({:>5.1}%)",
-                dist.very_large_files,
-                dist.very_large_files as f64 / total_files * 100.0
-            )?;
-        }
-
-        // Clustering information (Iceberg only)
-        if let Some(ref clustering) = report.metrics.clustering {
-            writeln!(f, "\n🎯 Clustering Information:")?;
-            writeln!(f, "{}", "─".repeat(60))?;
-            writeln!(
-                f,
-                "  Clustering Columns:  {}",
-                clustering.clustering_columns.join(", ")
-            )?;
-            writeln!(f, "  Cluster Count:       {}", clustering.cluster_count)?;
-            writeln!(
-                f,
-                "  Avg Files/Cluster:   {:.2}",
-                clustering.avg_files_per_cluster
-            )?;
-            let cluster_size_mb = clustering.avg_cluster_size_bytes / (1024.0 * 1024.0);
-            writeln!(f, "  Avg Cluster Size:    {:.2} MB", cluster_size_mb)?;
-        }
-
-        // Data skew analysis
-        writeln!(f, "\n📊 Data Skew Analysis:")?;
-        writeln!(f, "{}", "─".repeat(60))?;
-        let skew = &report.metrics.data_skew;
-        writeln!(
-            f,
-            "  Partition Skew Score: {:.2} (0=perfect, 1=highly skewed)",
-            skew.partition_skew_score
-        )?;
-        writeln!(
-            f,
-            "  File Size Skew:       {:.2} (0=perfect, 1=highly skewed)",
-            skew.file_size_skew_score
-        )?;
-        if skew.avg_partition_size > 0 {
-            let largest_mb = skew.largest_partition_size as f64 / (1024.0 * 1024.0);
-            let smallest_mb = skew.smallest_partition_size as f64 / (1024.0 * 1024.0);
-            let avg_mb = skew.avg_partition_size as f64 / (1024.0 * 1024.0);
-            writeln!(f, "  Largest Partition:   {:.2} MB", largest_mb)?;
-            writeln!(f, "  Smallest Partition:  {:.2} MB", smallest_mb)?;
-            writeln!(f, "  Avg Partition Size:  {:.2} MB", avg_mb)?;
-        }
-
-        // Metadata health
-        writeln!(f, "\n📋 Metadata Health:")?;
-        writeln!(f, "{}", "─".repeat(60))?;
-        let meta = &report.metrics.metadata_health;
-        writeln!(f, "  Metadata Files:       {}", meta.metadata_file_count)?;
-        let meta_size_mb = meta.metadata_total_size_bytes as f64 / (1024.0 * 1024.0);
-        writeln!(f, "  Metadata Size:        {:.2} MB", meta_size_mb)?;
-        if meta.metadata_file_count > 0 {
-            writeln!(
-                f,
-                "  Avg Metadata File:    {:.2} MB",
-                meta.avg_metadata_file_size / (1024.0 * 1024.0)
-            )?;
-        }
-        if meta.manifest_file_count > 0 {
-            writeln!(f, "  Manifest Files:       {}", meta.manifest_file_count)?;
-        }
-        if meta.first_file_name.is_some() {
-            writeln!(
-                f,
-                "  First File:           {}",
-                meta.first_file_name.as_ref().unwrap()
-            )?;
-        }
-        if meta.last_file_name.is_some() {
-            writeln!(
-                f,
-                "  Last File:            {}",
-                meta.last_file_name.as_ref().unwrap()
-            )?;
-        }
-
-        // Snapshot health
-        writeln!(f, "\n📸 Snapshot Health:")?;
-        writeln!(f, "{}", "─".repeat(60))?;
-        let snap = &report.metrics.snapshot_health;
-        writeln!(f, "  Snapshot Count:       {}", snap.snapshot_count)?;
-        writeln!(
-            f,
-            "  Retention Risk:       {:.1}%",
-            snap.snapshot_retention_risk * 100.0
-        )?;
-        if snap.oldest_snapshot_age_days > 0.0 {
-            writeln!(
-                f,
-                "  Oldest Snapshot:      {:.1} days",
-                snap.oldest_snapshot_age_days
-            )?;
-            writeln!(
-                f,
-                "  Newest Snapshot:      {:.1} days",
-                snap.newest_snapshot_age_days
-            )?;
-            writeln!(
-                f,
-                "  Avg Snapshot Age:     {:.1} days",
-                snap.avg_snapshot_age_days
-            )?;
-        }
-
-        // Unreferenced files warning
-        if !report.metrics.unreferenced_files.is_empty() {
-            writeln!(f, "\n⚠️  Unreferenced Files:")?;
-            writeln!(f, "{}", "─".repeat(60))?;
-            writeln!(f, "  Count:  {}", report.metrics.unreferenced_files.len())?;
-            let wasted_gb =
-                report.metrics.unreferenced_size_bytes as f64 / (1024.0 * 1024.0 * 1024.0);
-            if wasted_gb >= 1.0 {
-                writeln!(f, "  Wasted: {:.2} GB", wasted_gb)?;
-            } else {
-                let wasted_mb = report.metrics.unreferenced_size_bytes as f64 / (1024.0 * 1024.0);
-                writeln!(f, "  Wasted: {:.2} MB", wasted_mb)?;
-            }
-
-            writeln!(
-                f,
-                "\n  These files exist in storage but are not referenced in the"
-            )?;
-            writeln!(
-                f,
-                "  {} table metadata. Consider cleaning them up.",
-                report.table_type
-            )?;
-        }
-
-        // Deletion vector metrics (Delta Lake only)
-        if let Some(ref dv_metrics) = report.metrics.deletion_vector_metrics {
-            writeln!(f, "\n🗑️  Deletion Vector Analysis:")?;
-            writeln!(f, "{}", "─".repeat(60))?;
-            writeln!(
-                f,
-                "  Deletion Vectors:      {}",
-                dv_metrics.deletion_vector_count
-            )?;
-            let dv_size_mb = dv_metrics.total_deletion_vector_size_bytes as f64 / (1024.0 * 1024.0);
-            if dv_size_mb >= 1.0 {
-                writeln!(f, "  Total DV Size:         {:.2} MB", dv_size_mb)?;
-            } else {
-                let dv_size_kb = dv_metrics.total_deletion_vector_size_bytes as f64 / 1024.0;
-                writeln!(f, "  Total DV Size:         {:.2} KB", dv_size_kb)?;
-            }
-            writeln!(
-                f,
-                "  Deleted Rows:          {}",
-                dv_metrics.deleted_rows_count
-            )?;
-            writeln!(
-                f,
-                "  Oldest DV Age:         {:.1} days",
-                dv_metrics.deletion_vector_age_days
-            )?;
-            writeln!(
-                f,
-                "  Impact Score:          {:.2} (0=no impact, 1=high impact)",
-                dv_metrics.deletion_vector_impact_score
-            )?;
-        }
-
-        // Schema evolution metrics
-        if let Some(ref schema_metrics) = report.metrics.schema_evolution {
-            writeln!(f, "\n📋 Schema Evolution Analysis:")?;
-            writeln!(f, "{}", "─".repeat(60))?;
-            writeln!(
-                f,
-                "  Total Changes:         {}",
-                schema_metrics.total_schema_changes
-            )?;
-            writeln!(
-                f,
-                "  Breaking Changes:      {}",
-                schema_metrics.breaking_changes
-            )?;
-            writeln!(
-                f,
-                "  Non-Breaking Changes:  {}",
-                schema_metrics.non_breaking_changes
-            )?;
-            writeln!(
-                f,
-                "  Stability Score:       {:.2} (0=unstable, 1=very stable)",
-                schema_metrics.schema_stability_score
-            )?;
-            writeln!(
-                f,
-                "  Days Since Last:       {:.1} days",
-                schema_metrics.days_since_last_change
-            )?;
-            writeln!(
-                f,
-                "  Change Frequency:      {:.3} changes/day",
-                schema_metrics.schema_change_frequency
-            )?;
-            writeln!(
-                f,
-                "  Current Version:       {}",
-                schema_metrics.current_schema_version
-            )?;
-        }
-
-        // Time travel analysis
-        if let Some(ref tt_metrics) = report.metrics.time_travel_metrics {
-            writeln!(f, "\n⏰ Time Travel Analysis:")?;
-            writeln!(f, "{}", "─".repeat(60))?;
-            writeln!(f, "  Total Snapshots:       {}", tt_metrics.total_snapshots)?;
-            writeln!(
-                f,
-                "  Oldest Snapshot:       {:.1} days",
-                tt_metrics.oldest_snapshot_age_days
-            )?;
-            writeln!(
-                f,
-                "  Newest Snapshot:       {:.1} days",
-                tt_metrics.newest_snapshot_age_days
-            )?;
-            let historical_gb =
-                tt_metrics.total_historical_size_bytes as f64 / (1024.0 * 1024.0 * 1024.0);
-            if historical_gb >= 1.0 {
-                writeln!(f, "  Historical Size:       {:.2} GB", historical_gb)?;
-            } else {
-                let historical_mb =
-                    tt_metrics.total_historical_size_bytes as f64 / (1024.0 * 1024.0);
-                writeln!(f, "  Historical Size:       {:.2} MB", historical_mb)?;
-            }
-            writeln!(
-                f,
-                "  Storage Cost Impact:   {:.2} (0=low cost, 1=high cost)",
-                tt_metrics.storage_cost_impact_score
-            )?;
-            writeln!(
-                f,
-                "  Retention Efficiency:  {:.2} (0=inefficient, 1=very efficient)",
-                tt_metrics.retention_efficiency_score
-            )?;
-            writeln!(
-                f,
-                "  Recommended Retention: {} days",
-                tt_metrics.recommended_retention_days
-            )?;
-        }
-
-        // Table constraints analysis
-        if let Some(ref constraint_metrics) = report.metrics.table_constraints {
-            writeln!(f, "\n🔒 Table Constraints Analysis:")?;
-            writeln!(f, "{}", "─".repeat(60))?;
-            writeln!(
-                f,
-                "  Total Constraints:     {}",
-                constraint_metrics.total_constraints
-            )?;
-            writeln!(
-                f,
-                "  Check Constraints:     {}",
-                constraint_metrics.check_constraints
-            )?;
-            writeln!(
-                f,
-                "  NOT NULL Constraints:  {}",
-                constraint_metrics.not_null_constraints
-            )?;
-            writeln!(
-                f,
-                "  Unique Constraints:    {}",
-                constraint_metrics.unique_constraints
-            )?;
-            writeln!(
-                f,
-                "  Foreign Key Constraints: {}",
-                constraint_metrics.foreign_key_constraints
-            )?;
-            writeln!(
-                f,
-                "  Violation Risk:        {:.2} (0=low risk, 1=high risk)",
-                constraint_metrics.constraint_violation_risk
-            )?;
-            writeln!(
-                f,
-                "  Data Quality Score:    {:.2} (0=poor quality, 1=excellent quality)",
-                constraint_metrics.data_quality_score
-            )?;
-            writeln!(
-                f,
-                "  Constraint Coverage:   {:.2} (0=no coverage, 1=full coverage)",
-                constraint_metrics.constraint_coverage_score
-            )?;
-        }
-
-        // File compaction analysis
-        if let Some(ref compaction_metrics) = report.metrics.file_compaction {
-            writeln!(f, "\n📦 File Compaction Analysis:")?;
-            writeln!(f, "{}", "─".repeat(60))?;
-            writeln!(
-                f,
-                "  Compaction Opportunity: {:.2} (0=no opportunity, 1=high opportunity)",
-                compaction_metrics.compaction_opportunity_score
-            )?;
-            writeln!(
-                f,
-                "  Small Files Count:     {}",
-                compaction_metrics.small_files_count
-            )?;
-            let small_files_mb =
-                compaction_metrics.small_files_size_bytes as f64 / (1024.0 * 1024.0);
-            writeln!(f, "  Small Files Size:      {:.2} MB", small_files_mb)?;
-            writeln!(
-                f,
-                "  Potential Compaction:  {} files",
-                compaction_metrics.potential_compaction_files
-            )?;
-            let savings_mb =
-                compaction_metrics.estimated_compaction_savings_bytes as f64 / (1024.0 * 1024.0);
-            if savings_mb >= 1.0 {
-                writeln!(f, "  Estimated Savings:     {:.2} MB", savings_mb)?;
-            } else {
-                let savings_kb =
-                    compaction_metrics.estimated_compaction_savings_bytes as f64 / 1024.0;
-                writeln!(f, "  Estimated Savings:     {:.2} KB", savings_kb)?;
-            }
-            let target_mb =
-                compaction_metrics.recommended_target_file_size_bytes as f64 / (1024.0 * 1024.0);
-            writeln!(f, "  Recommended Target:    {:.0} MB", target_mb)?;
-            writeln!(
-                f,
-                "  Compaction Priority:   {}",
-                compaction_metrics.compaction_priority.to_uppercase()
-            )?;
-            writeln!(
-                f,
-                "  Z-Order Opportunity:   {}",
-                if compaction_metrics.z_order_opportunity {
-                    "Yes"
-                } else {
-                    "No"
-                }
-            )?;
-            if !compaction_metrics.z_order_columns.is_empty() {
-                writeln!(
-                    f,
-                    "  Z-Order Columns:       {}",
-                    compaction_metrics.z_order_columns.join(", ")
-                )?;
-            }
-        }
-
-        // Recommendations
-        if !report.metrics.recommendations.is_empty() {
-            writeln!(f, "\n💡 Recommendations:")?;
-            writeln!(f, "{}", "─".repeat(60))?;
-            for (i, rec) in report.metrics.recommendations.iter().enumerate() {
-                writeln!(f, "  {}. {}", i + 1, rec)?;
-            }
+        let size_gb = report.metrics.total_size_bytes as f64 / (1024.0 * 1024.0 * 1024.0);
+        let size_str = if size_gb >= 1.0 {
+            format!("{:.2} GB", size_gb)
         } else {
-            writeln!(f, "\n✅ No recommendations - table is in excellent health!")?;
-        }
+            let size_mb = report.metrics.total_size_bytes as f64 / (1024.0 * 1024.0);
+            format!("{:.2} MB", size_mb)
+        };
 
-        if !report.metrics.delta_table_specific_metrics.is_none() {
-            writeln!(f, "\nDelta Specific Metrics:")?;
-            writeln!(f, "{}", "─".repeat(60))?;
-            writeln!(
-                f,
-                "  Version:               {}",
-                report
-                    .metrics
-                    .delta_table_specific_metrics
-                    .as_ref()
-                    .unwrap()
-                    .version
-            )?;
-            writeln!(
-                f,
-                "  Min Reader Version:    {}",
-                report
-                    .metrics
-                    .delta_table_specific_metrics
-                    .as_ref()
-                    .unwrap()
-                    .protocol
-                    .min_reader_version
-            )?;
-            writeln!(
-                f,
-                "  Min Writer Version:    {}",
-                report
-                    .metrics
-                    .delta_table_specific_metrics
-                    .as_ref()
-                    .unwrap()
-                    .protocol
-                    .min_writer_version
-            )?;
-            writeln!(
-                f,
-                "  Reader Features:       {:?}",
-                report
-                    .metrics
-                    .delta_table_specific_metrics
-                    .as_ref()
-                    .unwrap()
-                    .protocol
-                    .reader_features
-            )?;
-            writeln!(
-                f,
-                "  Writer Features:       {:?}",
-                report
-                    .metrics
-                    .delta_table_specific_metrics
-                    .as_ref()
-                    .unwrap()
-                    .protocol
-                    .writer_features
-            )?;
-            writeln!(
-                f,
-                "  Table ID:              {}",
-                report
-                    .metrics
-                    .delta_table_specific_metrics
-                    .as_ref()
-                    .unwrap()
-                    .metadata
-                    .id
-            )?;
-            writeln!(
-                f,
-                "  Table Name:            {:?}",
-                report
-                    .metrics
-                    .delta_table_specific_metrics
-                    .as_ref()
-                    .unwrap()
-                    .metadata
-                    .name
-            )?;
-            writeln!(
-                f,
-                "  Table Description:     {:?}",
-                report
-                    .metrics
-                    .delta_table_specific_metrics
-                    .as_ref()
-                    .unwrap()
-                    .metadata
-                    .description
-            )?;
-            writeln!(
-                f,
-                "  Field Count:           {}",
-                report
-                    .metrics
-                    .delta_table_specific_metrics
-                    .as_ref()
-                    .unwrap()
-                    .metadata
-                    .field_count
-            )?;
-            writeln!(
-                f,
-                "  Partition Columns:     {:?}",
-                report
-                    .metrics
-                    .delta_table_specific_metrics
-                    .as_ref()
-                    .unwrap()
-                    .metadata
-                    .partition_columns
-            )?;
-            if let Some(created_time) = report
+        let avg_mb = report.metrics.avg_file_size_bytes / (1024.0 * 1024.0);
+
+        writeln!(
+            f,
+            " {:<19} {:>8}              {:<19} {:>8}  {:>5.1}%",
+            "Total Files",
+            format!("{}", report.metrics.total_files),
+            "Small (<16MB)",
+            dist.small_files,
+            if total_files > 0.0 {
+                dist.small_files as f64 / total_files * 100.0
+            } else {
+                0.0
+            }
+        )?;
+        writeln!(
+            f,
+            " {:<19} {:>8}              {:<19} {:>8}  {:>5.1}%",
+            "Total Size",
+            size_str,
+            "Medium (16-128MB)",
+            dist.medium_files,
+            if total_files > 0.0 {
+                dist.medium_files as f64 / total_files * 100.0
+            } else {
+                0.0
+            }
+        )?;
+        writeln!(
+            f,
+            " {:<19} {:>8}              {:<19} {:>8}  {:>5.1}%",
+            "Avg File Size",
+            format!("{:.2} MB", avg_mb),
+            "Large (128MB-1GB)",
+            dist.large_files,
+            if total_files > 0.0 {
+                dist.large_files as f64 / total_files * 100.0
+            } else {
+                0.0
+            }
+        )?;
+        writeln!(
+            f,
+            " {:<19} {:>8}              {:<19} {:>8}  {:>5.1}%",
+            "Partitions",
+            format!("{}", report.metrics.partition_count),
+            "Very Large (>1GB)",
+            dist.very_large_files,
+            if total_files > 0.0 {
+                dist.very_large_files as f64 / total_files * 100.0
+            } else {
+                0.0
+            }
+        )?;
+
+        // Data Skew Analysis and Metadata Health (side by side)
+        writeln!(f)?;
+        writeln!(f, " {:<41} {}", "Data Skew Analysis", "Metadata Health")?;
+        writeln!(f, "{}", "━".repeat(80))?;
+
+        let skew = &report.metrics.data_skew;
+        let meta = &report.metrics.metadata_health;
+
+        let largest_mb = skew.largest_partition_size as f64 / (1024.0 * 1024.0);
+        let smallest_mb = skew.smallest_partition_size as f64 / (1024.0 * 1024.0);
+        let avg_partition_mb = skew.avg_partition_size as f64 / (1024.0 * 1024.0);
+        let meta_size_mb = meta.metadata_total_size_bytes as f64 / (1024.0 * 1024.0);
+        let avg_meta_mb = meta.avg_metadata_file_size / (1024.0 * 1024.0);
+
+        writeln!(
+            f,
+            " {:<19} {:>8}              {:<19} {:>8}",
+            "Partition Skew",
+            format!("{:.2}", skew.partition_skew_score),
+            "Count",
+            format!("{}", meta.metadata_file_count)
+        )?;
+        writeln!(
+            f,
+            " {:<19} {:>8}              {:<19} {:>8}",
+            "File Size Skew",
+            format!("{:.2}", skew.file_size_skew_score),
+            "Size",
+            format!("{:.2} MB", meta_size_mb)
+        )?;
+        writeln!(
+            f,
+            " {:<19} {:>8}              {:<19} {:>8}",
+            "Largest Partition",
+            if skew.avg_partition_size > 0 {
+                format!("{:.2} MB", largest_mb)
+            } else {
+                "N/A".to_string()
+            },
+            "Avg Size",
+            if meta.metadata_file_count > 0 {
+                format!("{:.2} MB", avg_meta_mb)
+            } else {
+                "N/A".to_string()
+            }
+        )?;
+        writeln!(
+            f,
+            " {:<19} {:>8}              {:<19} {:>8}",
+            "Smallest Partition",
+            if skew.avg_partition_size > 0 {
+                format!("{:.2} MB", smallest_mb)
+            } else {
+                "N/A".to_string()
+            },
+            "Manifests",
+            format!("{}", meta.manifest_file_count)
+        )?;
+        // Truncate file names if too long
+        let first_file = meta.first_file_name.as_deref().unwrap_or("N/A");
+        let first_file_display = if first_file.len() > 30 {
+            format!("...{}", &first_file[first_file.len() - 27..])
+        } else {
+            first_file.to_string()
+        };
+
+        let last_file = meta.last_file_name.as_deref().unwrap_or("N/A");
+        let last_file_display = if last_file.len() > 30 {
+            format!("...{}", &last_file[last_file.len() - 27..])
+        } else {
+            last_file.to_string()
+        };
+
+        writeln!(
+            f,
+            " {:<19} {:>8}              {:<19} {:>8}",
+            "Avg Partition Size",
+            if skew.avg_partition_size > 0 {
+                format!("{:.2} MB", avg_partition_mb)
+            } else {
+                "N/A".to_string()
+            },
+            "First File",
+            first_file_display
+        )?;
+        writeln!(
+            f,
+            " {:<19} {:>8}              {:<19} {:>8}",
+            "", "", "Last File", last_file_display
+        )?;
+
+        // Snapshot Health and Unreferenced Files (side by side)
+        writeln!(f)?;
+        writeln!(f, " {:<41} {}", "Snapshot Health", "Unreferenced Files")?;
+        writeln!(f, "{}", "━".repeat(80))?;
+
+        let snap = &report.metrics.snapshot_health;
+        let has_unreferenced = !report.metrics.unreferenced_files.is_empty();
+        let wasted_gb = report.metrics.unreferenced_size_bytes as f64 / (1024.0 * 1024.0 * 1024.0);
+        let wasted_str = if wasted_gb >= 1.0 {
+            format!("{:.2} GB", wasted_gb)
+        } else {
+            let wasted_mb = report.metrics.unreferenced_size_bytes as f64 / (1024.0 * 1024.0);
+            format!("{:.2} MB", wasted_mb)
+        };
+
+        writeln!(
+            f,
+            " {:<19} {:>8}              {:<19} {:>8}",
+            "Snapshot Count",
+            format!("{}", snap.snapshot_count),
+            "Count",
+            if has_unreferenced {
+                format!("{}", report.metrics.unreferenced_files.len())
+            } else {
+                "0".to_string()
+            }
+        )?;
+        writeln!(
+            f,
+            " {:<19} {:>8}              {:<19} {:>8}",
+            "Retention Risk",
+            format!("{:.1}%", snap.snapshot_retention_risk * 100.0),
+            "Wasted Space",
+            if has_unreferenced {
+                wasted_str
+            } else {
+                "0 MB".to_string()
+            }
+        )?;
+        writeln!(
+            f,
+            " {:<19} {:>8}",
+            "Oldest Snapshot",
+            if snap.oldest_snapshot_age_days > 0.0 {
+                format!("{:.1} days", snap.oldest_snapshot_age_days)
+            } else {
+                "N/A".to_string()
+            }
+        )?;
+        writeln!(
+            f,
+            " {:<19} {:>8}              {:<39}",
+            "Newest Snapshot",
+            if snap.newest_snapshot_age_days > 0.0 {
+                format!("{:.1} days", snap.newest_snapshot_age_days)
+            } else {
+                "N/A".to_string()
+            },
+            if has_unreferenced {
+                "WARNING: Files exist in storage"
+            } else {
+                ""
+            }
+        )?;
+        writeln!(
+            f,
+            " {:<19} {:>8}              {:<39}",
+            "Avg Snapshot Age",
+            if snap.avg_snapshot_age_days > 0.0 {
+                format!("{:.1} days", snap.avg_snapshot_age_days)
+            } else {
+                "N/A".to_string()
+            },
+            if has_unreferenced {
+                "but not referenced in metadata"
+            } else {
+                ""
+            }
+        )?;
+
+        // Clustering (Iceberg) and Deletion Vectors (Delta) - side by side
+        // Only show clustering if there are actual clustering columns defined
+        let has_clustering = report.metrics.clustering.is_some()
+            && !report
                 .metrics
-                .delta_table_specific_metrics
+                .clustering
                 .as_ref()
                 .unwrap()
-                .metadata
-                .created_time
-            {
+                .clustering_columns
+                .is_empty();
+        let has_deletion_vectors = report.metrics.deletion_vector_metrics.is_some();
+
+        if has_clustering || has_deletion_vectors {
+            writeln!(f)?;
+            writeln!(
+                f,
+                " {:<41} {}",
+                if has_clustering {
+                    "Clustering (Iceberg)"
+                } else {
+                    ""
+                },
+                if has_deletion_vectors {
+                    "Deletion Vectors (Delta)"
+                } else {
+                    ""
+                }
+            )?;
+            writeln!(f, "{}", "━".repeat(80))?;
+
+            let max_rows = if has_clustering && has_deletion_vectors {
+                4
+            } else if has_clustering {
+                4
+            } else {
+                5
+            };
+
+            for i in 0..max_rows {
+                let left = if has_clustering {
+                    if let Some(ref clustering) = report.metrics.clustering {
+                        match i {
+                            0 => format!(
+                                " {:<19} {:>8}",
+                                "Columns",
+                                clustering.clustering_columns.join(", ")
+                            ),
+                            1 => format!(
+                                " {:<19} {:>8}",
+                                "Clusters",
+                                format!("{}", clustering.cluster_count)
+                            ),
+                            2 => format!(
+                                " {:<19} {:>8}",
+                                "Avg Files/Cluster",
+                                format!("{:.2}", clustering.avg_files_per_cluster)
+                            ),
+                            3 => format!(
+                                " {:<19} {:>8}",
+                                "Avg Cluster Size",
+                                format!(
+                                    "{:.2} MB",
+                                    clustering.avg_cluster_size_bytes / (1024.0 * 1024.0)
+                                )
+                            ),
+                            _ => format!("{:<40}", ""),
+                        }
+                    } else {
+                        format!("{:<40}", "")
+                    }
+                } else {
+                    format!("{:<40}", "")
+                };
+
+                let right = if let Some(ref dv_metrics) = report.metrics.deletion_vector_metrics {
+                    let dv_size_mb =
+                        dv_metrics.total_deletion_vector_size_bytes as f64 / (1024.0 * 1024.0);
+                    let dv_size_str = if dv_size_mb >= 1.0 {
+                        format!("{:.2} MB", dv_size_mb)
+                    } else {
+                        let dv_size_kb =
+                            dv_metrics.total_deletion_vector_size_bytes as f64 / 1024.0;
+                        format!("{:.2} KB", dv_size_kb)
+                    };
+
+                    match i {
+                        0 => format!(
+                            " {:<19} {:>8}",
+                            "Vectors",
+                            format!("{}", dv_metrics.deletion_vector_count)
+                        ),
+                        1 => format!(" {:<20} {:>8}", "DV Size", dv_size_str),
+                        2 => format!(
+                            " {:<19} {:>8}",
+                            "Deleted Rows",
+                            format!("{}", dv_metrics.deleted_rows_count)
+                        ),
+                        3 => format!(
+                            " {:<19} {:>8}",
+                            "Oldest DV Age",
+                            format!("{:.1} days", dv_metrics.deletion_vector_age_days)
+                        ),
+                        4 => format!(
+                            " {:<19} {:>8}",
+                            "Impact",
+                            format!("{:.2} (0-1)", dv_metrics.deletion_vector_impact_score)
+                        ),
+                        _ => format!("{:<40}", ""),
+                    }
+                } else {
+                    format!("{:<40}", "")
+                };
+
+                if has_clustering && has_deletion_vectors {
+                    writeln!(f, "{}              {}", left, right)?;
+                } else if has_clustering {
+                    writeln!(f, "{}", left)?;
+                } else {
+                    writeln!(f, "{:<40}  {}", "", right)?;
+                }
+            }
+        }
+
+        // Schema Evolution and Time Travel - side by side
+        let has_schema = report.metrics.schema_evolution.is_some();
+        let has_time_travel = report.metrics.time_travel_metrics.is_some();
+
+        if has_schema || has_time_travel {
+            writeln!(f)?;
+            writeln!(
+                f,
+                " {:<41} {}",
+                if has_schema { "Schema Evolution" } else { "" },
+                if has_time_travel {
+                    "Time Travel Analysis"
+                } else {
+                    ""
+                }
+            )?;
+            writeln!(f, "{}", "━".repeat(80))?;
+
+            for i in 0..7 {
+                let left = if let Some(ref schema_metrics) = report.metrics.schema_evolution {
+                    match i {
+                        0 => format!(
+                            " {:<19} {:>8}",
+                            "Total Changes",
+                            format!("{}", schema_metrics.total_schema_changes)
+                        ),
+                        1 => format!(
+                            " {:<19} {:>8}",
+                            "Breaking",
+                            format!("{}", schema_metrics.breaking_changes)
+                        ),
+                        2 => format!(
+                            " {:<19} {:>8}",
+                            "Non-Breaking",
+                            format!("{}", schema_metrics.non_breaking_changes)
+                        ),
+                        3 => format!(
+                            " {:<19} {:>8}",
+                            "Stability (0-1)",
+                            format!("{:.2}", schema_metrics.schema_stability_score)
+                        ),
+                        4 => format!(
+                            " {:<19} {:>8}",
+                            "Days Since Last",
+                            format!("{:.1}d", schema_metrics.days_since_last_change)
+                        ),
+                        5 => format!(
+                            " {:<19} {:>8}",
+                            "Change Freq",
+                            format!("{:.1}/d", schema_metrics.schema_change_frequency)
+                        ),
+                        6 => format!(
+                            " {:<19} {:>8}",
+                            "Version",
+                            format!("{}", schema_metrics.current_schema_version)
+                        ),
+                        _ => format!("{:<40}", ""),
+                    }
+                } else {
+                    format!("{:<40}", "")
+                };
+
+                let right = if let Some(ref tt_metrics) = report.metrics.time_travel_metrics {
+                    let historical_gb =
+                        tt_metrics.total_historical_size_bytes as f64 / (1024.0 * 1024.0 * 1024.0);
+                    let historical_str = if historical_gb >= 1.0 {
+                        format!("{:.2} GB", historical_gb)
+                    } else {
+                        let historical_mb =
+                            tt_metrics.total_historical_size_bytes as f64 / (1024.0 * 1024.0);
+                        format!("{:.2} MB", historical_mb)
+                    };
+
+                    match i {
+                        0 => format!(
+                            " {:<19} {:>8}",
+                            "Snapshots",
+                            format!("{}", tt_metrics.total_snapshots)
+                        ),
+                        1 => format!(
+                            " {:<19} {:>8}",
+                            "Oldest",
+                            format!("{:.1} days", tt_metrics.oldest_snapshot_age_days)
+                        ),
+                        2 => format!(
+                            " {:<19} {:>8}",
+                            "Newest",
+                            format!("{:.1} days", tt_metrics.newest_snapshot_age_days)
+                        ),
+                        3 => format!(" {:<20} {:>7}", "Historical Size", historical_str),
+                        4 => format!(
+                            " {:<19} {:>8}",
+                            "Cost Impact",
+                            format!("{:.2} (0-1)", tt_metrics.storage_cost_impact_score)
+                        ),
+                        5 => format!(
+                            " {:<19} {:>8}",
+                            "Retention Eff",
+                            format!("{:.2} (0-1)", tt_metrics.retention_efficiency_score)
+                        ),
+                        6 => format!(
+                            " {:<19} {:>8}",
+                            "Recommended",
+                            format!("{} days", tt_metrics.recommended_retention_days)
+                        ),
+                        _ => format!("{:<40}", ""),
+                    }
+                } else {
+                    format!("{:<40}", "")
+                };
+
+                if has_schema && has_time_travel {
+                    writeln!(f, "{}              {}", left, right)?;
+                } else if has_schema {
+                    writeln!(f, "{}", left)?;
+                } else {
+                    writeln!(f, "{:<40}  {}", "", right)?;
+                }
+            }
+        }
+
+        // Table Constraints and File Compaction - side by side
+        let has_constraints = report.metrics.table_constraints.is_some();
+        let has_compaction = report.metrics.file_compaction.is_some();
+
+        if has_constraints || has_compaction {
+            writeln!(f)?;
+            writeln!(
+                f,
+                " {:<41} {}",
+                if has_constraints {
+                    "Table Constraints"
+                } else {
+                    ""
+                },
+                if has_compaction {
+                    "File Compaction"
+                } else {
+                    ""
+                }
+            )?;
+            writeln!(f, "{}", "━".repeat(80))?;
+
+            let max_rows = 9;
+
+            for i in 0..max_rows {
+                let left = if let Some(ref constraint_metrics) = report.metrics.table_constraints {
+                    match i {
+                        0 => format!(
+                            " {:<20} {:>6}",
+                            "Total",
+                            format!("{}", constraint_metrics.total_constraints)
+                        ),
+                        1 => format!(
+                            " {:<20} {:>6}",
+                            "Check",
+                            format!("{}", constraint_metrics.check_constraints)
+                        ),
+                        2 => format!(
+                            " {:<20} {:>6}",
+                            "NOT NULL",
+                            format!("{}", constraint_metrics.not_null_constraints)
+                        ),
+                        3 => format!(
+                            " {:<20} {:>6}",
+                            "Unique",
+                            format!("{}", constraint_metrics.unique_constraints)
+                        ),
+                        4 => format!(
+                            " {:<20} {:>6}",
+                            "Foreign Key",
+                            format!("{}", constraint_metrics.foreign_key_constraints)
+                        ),
+                        5 => format!(
+                            " {:<20} {:>6}",
+                            "Violation Risk (0-1)",
+                            format!("{:.2}", constraint_metrics.constraint_violation_risk)
+                        ),
+                        6 => format!(
+                            " {:<20} {:>6}",
+                            "Quality Score (0-1)",
+                            format!("{:.2}", constraint_metrics.data_quality_score)
+                        ),
+                        7 => format!(
+                            " {:<20} {:>6}",
+                            "Coverage (0-1)",
+                            format!("{:.2}", constraint_metrics.constraint_coverage_score)
+                        ),
+                        _ => format!("{:<40}", ""),
+                    }
+                } else {
+                    format!("{:<40}", "")
+                };
+
+                let right = if let Some(ref compaction_metrics) = report.metrics.file_compaction {
+                    let small_files_mb =
+                        compaction_metrics.small_files_size_bytes as f64 / (1024.0 * 1024.0);
+                    let savings_mb = compaction_metrics.estimated_compaction_savings_bytes as f64
+                        / (1024.0 * 1024.0);
+                    let savings_str = if savings_mb >= 1.0 {
+                        format!("{:.2} MB", savings_mb)
+                    } else {
+                        let savings_kb =
+                            compaction_metrics.estimated_compaction_savings_bytes as f64 / 1024.0;
+                        format!("{:.2} KB", savings_kb)
+                    };
+                    let target_mb = compaction_metrics.recommended_target_file_size_bytes as f64
+                        / (1024.0 * 1024.0);
+
+                    match i {
+                        0 => format!(
+                            " {:<19} {:>8}",
+                            "Opportunity (0-1)",
+                            format!("{:.2}", compaction_metrics.compaction_opportunity_score)
+                        ),
+                        1 => format!(
+                            " {:<19} {:>8}",
+                            "Small Files",
+                            format!("{}", compaction_metrics.small_files_count)
+                        ),
+                        2 => format!(
+                            " {:<19} {:>8}",
+                            "Small Size",
+                            format!("{:.2} MB", small_files_mb)
+                        ),
+                        3 => format!(
+                            " {:<19} {:>8}",
+                            "Potential",
+                            format!("{} files", compaction_metrics.potential_compaction_files)
+                        ),
+                        4 => format!(" {:<19} {:>8}", "Savings", savings_str),
+                        5 => format!(
+                            " {:<19} {:>8}",
+                            "Target Size",
+                            format!("{:.0} MB", target_mb)
+                        ),
+                        6 => format!(
+                            " {:<19} {:>8}",
+                            "Priority",
+                            compaction_metrics.compaction_priority.to_uppercase()
+                        ),
+                        7 => format!(
+                            " {:<19} {:>8}",
+                            "Z-Order",
+                            if compaction_metrics.z_order_opportunity {
+                                "Yes"
+                            } else {
+                                "No"
+                            }
+                        ),
+                        8 => {
+                            if !compaction_metrics.z_order_columns.is_empty() {
+                                format!(
+                                    " {:<19} {:>8}",
+                                    "Z-Columns",
+                                    compaction_metrics.z_order_columns.join(", ")
+                                )
+                            } else {
+                                format!("{:<40}", "")
+                            }
+                        }
+                        _ => format!("{:<40}", ""),
+                    }
+                } else {
+                    format!("{:<40}", "")
+                };
+
+                // Skip empty rows (e.g., row 8 when no Z-Order columns)
+                let left_empty = left.trim().is_empty();
+                let right_empty = right.trim().is_empty();
+
+                if left_empty && right_empty {
+                    continue;
+                }
+
+                if has_constraints && has_compaction {
+                    writeln!(f, "{}              {}", left, right)?;
+                } else if has_constraints {
+                    writeln!(f, "{}", left)?;
+                } else {
+                    writeln!(f, "{:<40}  {}", "", right)?;
+                }
+            }
+        }
+
+        // Delta Specific Metrics (full width)
+        if let Some(ref delta_metrics) = report.metrics.delta_table_specific_metrics {
+            writeln!(f)?;
+            writeln!(f, " Delta Specific Metrics")?;
+            writeln!(f, "{}", "━".repeat(80))?;
+            writeln!(
+                f,
+                " {:<40} {:>32}",
+                "Version",
+                format!("{}", delta_metrics.version)
+            )?;
+            writeln!(
+                f,
+                " {:<40} {:>32}",
+                "Min Reader Version",
+                format!("{}", delta_metrics.protocol.min_reader_version)
+            )?;
+            writeln!(
+                f,
+                " {:<40} {:>32}",
+                "Min Writer Version",
+                format!("{}", delta_metrics.protocol.min_writer_version)
+            )?;
+            writeln!(
+                f,
+                " {:<40} {:>32}",
+                "Reader Features",
+                format!("{:?}", delta_metrics.protocol.reader_features)
+            )?;
+            writeln!(
+                f,
+                " {:<40} {:>32}",
+                "Writer Features",
+                format!("{:?}", delta_metrics.protocol.writer_features)
+            )?;
+            writeln!(
+                f,
+                " {:<31}  {:>40}",
+                "Table ID",
+                format!("{}", delta_metrics.metadata.id)
+            )?;
+            writeln!(
+                f,
+                " {:<40} {:>32}",
+                "Table Name",
+                format!("{:?}", delta_metrics.metadata.name)
+            )?;
+            writeln!(
+                f,
+                " {:<40} {:>32}",
+                "Table Description",
+                format!("{:?}", delta_metrics.metadata.description)
+            )?;
+            writeln!(
+                f,
+                " {:<40} {:>32}",
+                "Field Count",
+                format!("{}", delta_metrics.metadata.field_count)
+            )?;
+            writeln!(
+                f,
+                " {:<40} {:>32}",
+                "Partition Columns",
+                format!("{:?}", delta_metrics.metadata.partition_columns)
+            )?;
+            if let Some(created_time) = delta_metrics.metadata.created_time {
                 let created_datetime = DateTime::from_timestamp(created_time / 1000, 0).unwrap();
                 writeln!(
                     f,
-                    "  Created Time:          {}",
+                    " {:<40} {:>32}",
+                    "Created Time",
                     created_datetime.to_rfc3339()
                 )?;
             }
-            let tbl_props = report
-                .metrics
-                .delta_table_specific_metrics
-                .as_ref()
-                .unwrap()
-                .table_properties
-                .clone();
+            let tbl_props = delta_metrics.table_properties.clone();
             writeln!(
                 f,
-                "  Table Properties:      {}",
+                " {:<40} {:>32}",
+                "Table Properties",
                 if !tbl_props.is_empty() {
-                    format!(
-                        "TableProperties {}",
-                        tbl_props
-                            .iter()
-                            .map(|(k, v)| format!("{}: {}", k, v))
-                            .collect::<Vec<String>>()
-                            .join(", ")
-                    )
+                    tbl_props
+                        .iter()
+                        .map(|(k, v)| format!("{}: {}", k, v))
+                        .collect::<Vec<String>>()
+                        .join(", ")
                 } else {
                     "None".to_string()
                 }
             )?;
-            writeln!(
-                f,
-                "  File Statistics:       {:?}",
-                report
-                    .metrics
-                    .delta_table_specific_metrics
-                    .as_ref()
-                    .unwrap()
-                    .file_stats
-            )?;
-            writeln!(
-                f,
-                "  Partition Info:        {:?}",
-                report
-                    .metrics
-                    .delta_table_specific_metrics
-                    .as_ref()
-                    .unwrap()
-                    .partition_info
-            )?;
-        }
+            // File Statistics - formatted nicely
+            let file_stats = &delta_metrics.file_stats;
+            let total_size_mb = file_stats.total_size_bytes as f64 / (1024.0 * 1024.0);
+            let avg_size_mb = file_stats.avg_file_size_bytes / (1024.0 * 1024.0);
+            let min_size_kb = file_stats.min_file_size_bytes as f64 / 1024.0;
+            let max_size_mb = file_stats.max_file_size_bytes as f64 / (1024.0 * 1024.0);
 
-        if !report.timed_metrics.duration_collection.is_empty() {
-            writeln!(f, "\n⏱️ Timed Metrics:")?;
-            writeln!(f, "{}", "─".repeat(60))?;
-            for (name, _, dur) in report.timed_metrics.duration_collection.iter() {
-                writeln!(f, "  {}: {}ms", name, dur)?;
+            writeln!(f, " File Statistics")?;
+            writeln!(
+                f,
+                "   {:<38} {:>32}",
+                "Files",
+                format!("{}", file_stats.num_files)
+            )?;
+            writeln!(
+                f,
+                "   {:<38} {:>32}",
+                "Total Size",
+                format!("{:.2} MB", total_size_mb)
+            )?;
+            writeln!(
+                f,
+                "   {:<38} {:>32}",
+                "Avg Size",
+                format!("{:.2} MB", avg_size_mb)
+            )?;
+            writeln!(
+                f,
+                "   {:<38} {:>32}",
+                "Min Size",
+                format!("{:.2} KB", min_size_kb)
+            )?;
+            writeln!(
+                f,
+                "   {:<38} {:>32}",
+                "Max Size",
+                format!("{:.2} MB", max_size_mb)
+            )?;
+            writeln!(
+                f,
+                "   {:<38} {:>32}",
+                "Files with Deletion Vectors",
+                format!("{}", file_stats.files_with_deletion_vectors)
+            )?;
+
+            // Partition Info - formatted nicely
+            let partition_info = &delta_metrics.partition_info;
+            writeln!(f, " Partition Info")?;
+            writeln!(
+                f,
+                "   {:<38} {:>32}",
+                "Partition Columns",
+                format!("{}", partition_info.num_partition_columns)
+            )?;
+            if !partition_info.partition_columns.is_empty() {
+                writeln!(
+                    f,
+                    "   {:<38} {:>32}",
+                    "Column Names",
+                    partition_info.partition_columns.join(", ")
+                )?;
+            }
+            if let Some(count) = partition_info.estimated_partition_count {
+                writeln!(
+                    f,
+                    "   {:<38} {:>32}",
+                    "Estimated Partitions",
+                    format!("{}", count)
+                )?;
             }
         }
 
-        writeln!(f, "\n{}\n", "=".repeat(60))
+        // Recommendations (full width)
+        writeln!(f)?;
+        writeln!(f, " Recommendations")?;
+        writeln!(f, "{}", "━".repeat(80))?;
+        if !report.metrics.recommendations.is_empty() {
+            for (i, rec) in report.metrics.recommendations.iter().enumerate() {
+                writeln!(f, " {}. {}", i + 1, rec)?;
+            }
+        } else {
+            writeln!(f, "  No recommendations - table is in excellent health!")?;
+        }
+
+        Ok(())
     }
 }
 
