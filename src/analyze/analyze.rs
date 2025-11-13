@@ -142,6 +142,72 @@ impl AnalyzerBuilder {
     }
 }
 
+/// Main analyzer for data lake table health analysis.
+///
+/// The `Analyzer` provides comprehensive health analysis for data lake tables
+/// across multiple formats (Delta Lake, Apache Iceberg, Apache Hudi, Lance) and
+/// storage providers (AWS S3, Azure Data Lake, GCS, Local filesystem).
+///
+/// # Features
+///
+/// - Automatic table format detection
+/// - Parallel file processing for improved performance
+/// - Comprehensive health metrics including:
+///   - File size distribution
+///   - Partition analysis
+///   - Data skew detection
+///   - Unreferenced file detection
+///   - Schema evolution tracking
+///   - Time travel metrics
+///   - Deletion vector analysis
+///   - Compaction opportunities
+///
+/// # Examples
+///
+/// ## Basic Usage
+///
+/// ```no_run
+/// use lake_pulse::{Analyzer, StorageConfig};
+///
+/// # async fn example() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+/// // Configure storage for local filesystem
+/// let config = StorageConfig::local()
+///     .with_option("path", "./examples/data");
+///
+/// // Create analyzer
+/// let analyzer = Analyzer::builder(config)
+///     .build()
+///     .await?;
+///
+/// // Analyze a table (auto-detects format)
+/// let report = analyzer.analyze("delta_dataset").await?;
+/// println!("{}", report);
+/// # Ok(())
+/// # }
+/// ```
+///
+/// ## Using Parallelism for Large Tables
+///
+/// ```no_run
+/// use lake_pulse::{Analyzer, StorageConfig};
+///
+/// # async fn example() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+/// let config = StorageConfig::aws()
+///     .with_option("bucket", "my-bucket")
+///     .with_option("region", "us-east-1");
+///
+/// // Use parallelism for faster processing of large tables
+/// let analyzer = Analyzer::builder(config)
+///     .with_parallelism(10)
+///     .build()
+///     .await?;
+///
+/// let report = analyzer.analyze("large-table").await?;
+/// # Ok(())
+/// # }
+/// ```
+///
+/// For complete examples, see the [`examples/`](https://github.com/aionescu_adobe/lake-pulse/tree/main/examples) directory.
 pub struct Analyzer {
     storage_provider: Arc<dyn StorageProvider>,
     parallelism: usize,
