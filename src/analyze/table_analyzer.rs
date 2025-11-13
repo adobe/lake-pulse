@@ -53,7 +53,16 @@ pub trait TableAnalyzer: Send + Sync {
     ///
     /// # Returns
     ///
-    /// A list of file paths that are referenced in the table metadata
+    /// A `Result` containing:
+    /// * `Ok(Vec<String>)` - List of file paths that are referenced in the table metadata
+    /// * `Err` - If metadata reading or parsing fails
+    ///
+    /// # Errors
+    ///
+    /// This method will return an error if:
+    /// * Any metadata file cannot be read from storage
+    /// * Metadata file content is not valid UTF-8
+    /// * JSON/metadata parsing fails
     async fn find_referenced_files(
         &self,
         metadata_files: &Vec<FileMetadata>,
@@ -76,6 +85,17 @@ pub trait TableAnalyzer: Send + Sync {
     /// * `data_files_total_size` - Total size of all data files in bytes
     /// * `data_files_total_files` - Total number of data files
     /// * `metrics` - The metrics object to update (mutated in place)
+    ///
+    /// # Returns
+    ///
+    /// A `Result` indicating success or failure of the metrics extraction.
+    ///
+    /// # Errors
+    ///
+    /// This method will return an error if:
+    /// * Any metadata file cannot be read or parsed
+    /// * Metric calculations fail due to invalid data
+    /// * Parallel processing encounters errors
     async fn update_metrics_from_metadata(
         &self,
         metadata_files: &Vec<FileMetadata>,

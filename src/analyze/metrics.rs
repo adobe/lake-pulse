@@ -1,11 +1,11 @@
 use crate::reader::delta::metrics::DeltaMetrics;
 use crate::reader::hudi::metrics::HudiMetrics;
 use crate::reader::iceberg::metrics::IcebergMetrics;
-use crate::util::ascii_gantt::GanttConfig;
 use crate::util::ascii_gantt::to_ascii_gantt;
+use crate::util::ascii_gantt::GanttConfig;
 use chrono::DateTime;
 use serde::{Deserialize, Serialize};
-use serde_json::{Error as JsonError, json};
+use serde_json::{json, Error as JsonError};
 use std::collections::{HashMap, LinkedList};
 use std::error::Error;
 use std::fmt::{Display, Formatter, Result as FmtResult};
@@ -429,7 +429,11 @@ impl Display for HealthReport {
                 f,
                 "\n  These files exist in storage but are not referenced in the"
             )?;
-            writeln!(f, "  {} table metadata. Consider cleaning them up.", report.table_type)?;
+            writeln!(
+                f,
+                "  {} table metadata. Consider cleaning them up.",
+                report.table_type
+            )?;
         }
 
         // Deletion vector metrics (Delta Lake only)

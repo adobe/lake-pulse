@@ -16,12 +16,24 @@ pub struct HudiReader {
 }
 
 impl HudiReader {
-    /// Create a new HudiReader from the given location
+    /// Create a new HudiReader from the given location.
     ///
     /// # Arguments
     ///
     /// * `location` - The path to the Hudi table (e.g., "s3://bucket/path", "/local/path")
     /// * `table_type` - The Hudi table type ("COPY_ON_WRITE" or "MERGE_ON_READ")
+    ///
+    /// # Returns
+    ///
+    /// A `Result` containing:
+    /// * `Ok(HudiReader)` - A successfully created Hudi table reader
+    /// * `Err(Box<dyn Error + Send + Sync>)` - If the reader cannot be created
+    ///
+    /// # Errors
+    ///
+    /// This function will return an error if:
+    /// * The location is invalid
+    /// * The table type is not recognized
     pub fn new(location: &str, table_type: &str) -> Result<Self, Box<dyn Error + Send + Sync>> {
         info!("Creating Hudi reader for location={}", location);
 
@@ -31,11 +43,24 @@ impl HudiReader {
         })
     }
 
-    /// Extract comprehensive metrics from the Hudi table
+    /// Extract comprehensive metrics from the Hudi table.
     ///
     /// This method provides basic metrics extracted from the table structure.
     /// For full Hudi support, consider using the hudi-rs crate directly when
     /// dependency conflicts are resolved.
+    ///
+    /// # Returns
+    ///
+    /// A `Result` containing:
+    /// * `Ok(HudiMetrics)` - Basic metrics including table metadata, timeline info, and file statistics
+    /// * `Err(Box<dyn Error + Send + Sync>)` - If metrics cannot be extracted
+    ///
+    /// # Errors
+    ///
+    /// This function will return an error if:
+    /// * Table metadata cannot be read
+    /// * Timeline information is corrupted or invalid
+    /// * File statistics cannot be computed
     pub async fn extract_metrics(&self) -> Result<HudiMetrics, Box<dyn Error + Send + Sync>> {
         info!("Extracting metrics from Hudi table");
 

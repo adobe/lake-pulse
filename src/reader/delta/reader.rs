@@ -1,7 +1,7 @@
 use super::metrics::{DeltaMetrics, FileStatistics, PartitionMetrics, ProtocolInfo, TableMetadata};
 use crate::util::retry::retry_with_max_retries;
 use deltalake::kernel::{Metadata, StructType};
-use deltalake::{DeltaTable, open_table_with_storage_options};
+use deltalake::{open_table_with_storage_options, DeltaTable};
 use std::collections::HashMap;
 use std::error::Error;
 use tracing::{info, warn};
@@ -13,12 +13,27 @@ pub struct DeltaReader {
 }
 
 impl DeltaReader {
-    /// Open a Delta table from the given location
+    /// Open a Delta table from the given location.
     ///
     /// # Arguments
     ///
     /// * `table_uri` - The URI of the Delta table (e.g., "s3://bucket/path", "abfss://container@account.dfs.core.windows.net/path")
     /// * `cleaned_storage_options` - Optional storage configuration options
+    ///
+    /// # Returns
+    ///
+    /// A `Result` containing:
+    /// * `Ok(DeltaReader)` - A successfully opened Delta table reader
+    /// * `Err(Box<dyn Error + Send + Sync>)` - If the table cannot be opened
+    ///
+    /// # Errors
+    ///
+    /// This function will return an error if:
+    /// * The location URI is invalid or cannot be parsed
+    /// * The Delta table does not exist at the specified location
+    /// * Storage credentials are invalid or expired
+    /// * Network or storage access errors occur
+    /// * The table metadata is corrupted or cannot be read
     pub async fn open(
         location: &str,
         cleaned_storage_options: &HashMap<String, String>,
@@ -44,10 +59,24 @@ impl DeltaReader {
         Ok(Self { table })
     }
 
-    /// Extract comprehensive metrics from the Delta table
+    /// Extract comprehensive metrics from the Delta table.
     ///
     /// This method reads the table's snapshot and extracts various metrics including
     /// protocol information, metadata, table properties, and file statistics.
+    ///
+    /// # Returns
+    ///
+    /// A `Result` containing:
+    /// * `Ok(DeltaMetrics)` - Comprehensive metrics including protocol info, metadata, table properties, and file statistics
+    /// * `Err(Box<dyn Error + Send + Sync>)` - If metrics cannot be extracted
+    ///
+    /// # Errors
+    ///
+    /// This function will return an error if:
+    /// * The table snapshot cannot be read
+    /// * Table metadata is corrupted or invalid
+    /// * File statistics cannot be computed
+    /// * Partition information cannot be extracted
     pub async fn extract_metrics(&self) -> Result<DeltaMetrics, Box<dyn Error + Send + Sync>> {
         info!("Extracting metrics from Delta table");
 

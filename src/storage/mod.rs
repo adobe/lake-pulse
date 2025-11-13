@@ -10,7 +10,7 @@
 pub mod config;
 pub mod error;
 pub mod factory;
-pub mod generic;
+pub mod object_store;
 pub mod provider;
 
 // Public exports

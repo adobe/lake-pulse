@@ -11,4 +11,3 @@ async fn main() {
     // Print pretty report
     println!("{}", report);
 }
-

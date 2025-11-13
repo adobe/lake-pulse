@@ -60,6 +60,10 @@ impl AnalyzerBuilder {
     ///
     /// * `config` - The storage configuration to use for the analyzer
     ///
+    /// # Returns
+    ///
+    /// A new `AnalyzerBuilder` instance with default parallelism settings.
+    ///
     /// # Examples
     ///
     /// ```no_run
@@ -82,6 +86,10 @@ impl AnalyzerBuilder {
     ///
     /// * `parallelism` - The desired level of parallelism (number of concurrent tasks)
     ///
+    /// # Returns
+    ///
+    /// The `AnalyzerBuilder` instance with updated parallelism setting (for method chaining).
+    ///
     /// ```no_run
     /// use lake_pulse::analyze::analyze::AnalyzerBuilder;
     /// use lake_pulse::storage::StorageConfig;
@@ -99,6 +107,12 @@ impl AnalyzerBuilder {
     ///
     /// This method performs the async initialization of the storage provider
     /// and constructs the final `Analyzer` instance.
+    ///
+    /// # Returns
+    ///
+    /// A `Result` containing:
+    /// * `Ok(Analyzer)` - A fully initialized analyzer ready to analyze tables
+    /// * `Err(Box<dyn Error + Send + Sync>)` - If the analyzer cannot be built
     ///
     /// # Errors
     ///
@@ -143,6 +157,10 @@ impl Analyzer {
     ///
     /// * `config` - The storage configuration to use
     ///
+    /// # Returns
+    ///
+    /// A new `AnalyzerBuilder` instance for configuring and building an analyzer.
+    ///
     /// # Examples
     ///
     /// ```no_run
@@ -162,6 +180,34 @@ impl Analyzer {
         AnalyzerBuilder::new(config)
     }
 
+    /// Analyze a table at the given location and generate a comprehensive health report.
+    ///
+    /// This method performs a complete analysis of the table including:
+    /// - File listing and categorization
+    /// - Metadata processing
+    /// - Referenced file discovery
+    /// - Unreferenced file detection
+    /// - Table-specific metrics extraction (Delta, Iceberg, Hudi, Lance)
+    /// - Health metrics calculation
+    ///
+    /// # Arguments
+    ///
+    /// * `location` - The path to the table relative to the storage provider's base path
+    ///
+    /// # Returns
+    ///
+    /// A `Result` containing:
+    /// * `Ok(HealthReport)` - A comprehensive health report with metrics and recommendations
+    /// * `Err(Box<dyn Error + Send + Sync>)` - If the analysis fails
+    ///
+    /// # Errors
+    ///
+    /// This function will return an error if:
+    /// * The storage connection cannot be validated
+    /// * Partitions cannot be discovered
+    /// * Files cannot be listed
+    /// * Metadata files cannot be processed
+    /// * Table-specific readers fail to open or extract metrics
     pub async fn analyze(
         &self,
         location: &str,
@@ -619,6 +665,19 @@ impl Analyzer {
         (small_files, medium_files, large_files, very_large_files)
     }
 
+    /// Calculate metadata health metrics.
+    ///
+    /// # Arguments
+    ///
+    /// * `metadata_files` - Vector of metadata file information
+    ///
+    /// # Returns
+    ///
+    /// A tuple containing:
+    /// * `usize` - Metadata file count
+    /// * `u64` - Total metadata size in bytes
+    /// * `f64` - Metadata health score (average file size)
+    /// * `f64` - Metadata growth rate (currently placeholder, returns 0.0)
     pub fn calculate_metadata_health(
         &self,
         metadata_files: &Vec<FileMetadata>,

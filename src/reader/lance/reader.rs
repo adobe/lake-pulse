@@ -10,11 +10,26 @@ pub struct LanceReader {
 }
 
 impl LanceReader {
-    /// Open a Lance table from the given location
+    /// Open a Lance table from the given location.
     ///
     /// # Arguments
     ///
     /// * `location` - The path to the Lance table (e.g., "/path/to/table", "s3://bucket/path")
+    ///
+    /// # Returns
+    ///
+    /// A `Result` containing:
+    /// * `Ok(LanceReader)` - A successfully opened Lance table reader
+    /// * `Err(Box<dyn Error + Send + Sync>)` - If the table cannot be opened
+    ///
+    /// # Errors
+    ///
+    /// This function will return an error if:
+    /// * The location is invalid or cannot be accessed
+    /// * The Lance dataset does not exist at the specified location
+    /// * Storage credentials are invalid or expired
+    /// * Network or storage access errors occur
+    /// * The dataset metadata is corrupted or cannot be read
     ///
     /// # Example
     ///
@@ -42,10 +57,24 @@ impl LanceReader {
         Ok(Self { dataset })
     }
 
-    /// Extract comprehensive metrics from the Lance table
+    /// Extract comprehensive metrics from the Lance table.
     ///
     /// This method reads the table's metadata and extracts various metrics including
     /// version information, schema, file statistics, fragment information, and indices.
+    ///
+    /// # Returns
+    ///
+    /// A `Result` containing:
+    /// * `Ok(LanceMetrics)` - Comprehensive metrics including version, schema, file statistics, fragments, and indices
+    /// * `Err(Box<dyn Error + Send + Sync>)` - If metrics cannot be extracted
+    ///
+    /// # Errors
+    ///
+    /// This function will return an error if:
+    /// * Table metadata cannot be read
+    /// * Schema information is corrupted or invalid
+    /// * Fragment information cannot be accessed
+    /// * Index information cannot be retrieved
     pub async fn extract_metrics(&self) -> Result<LanceMetrics, Box<dyn Error + Send + Sync>> {
         info!("Extracting metrics from Lance table");
 

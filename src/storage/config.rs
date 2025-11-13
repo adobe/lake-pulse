@@ -102,10 +102,15 @@ pub struct StorageConfig {
 }
 
 impl StorageConfig {
-    /// Create a new storage configuration
+    /// Create a new storage configuration.
     ///
     /// # Arguments
+    ///
     /// * `storage_type` - The type of storage provider ("local", "aws", "azure", "gcs")
+    ///
+    /// # Returns
+    ///
+    /// A new `StorageConfig` instance with default options for the specified storage type.
     pub fn new(storage_type: impl Into<String>) -> Self {
         let storage_type_str = storage_type.into();
         let storage_type = match storage_type_str.to_lowercase().as_str() {
@@ -122,7 +127,11 @@ impl StorageConfig {
         }
     }
 
-    /// Create a local filesystem storage configuration
+    /// Create a local filesystem storage configuration.
+    ///
+    /// # Returns
+    ///
+    /// A new `StorageConfig` instance configured for local filesystem access with default options.
     pub fn local() -> Self {
         Self {
             storage_type: StorageType::Local,
@@ -130,7 +139,11 @@ impl StorageConfig {
         }
     }
 
-    /// Create an AWS S3 storage configuration
+    /// Create an AWS S3 storage configuration.
+    ///
+    /// # Returns
+    ///
+    /// A new `StorageConfig` instance configured for AWS S3 access with default options.
     pub fn aws() -> Self {
         Self {
             storage_type: StorageType::Aws,
@@ -138,7 +151,11 @@ impl StorageConfig {
         }
     }
 
-    /// Create an Azure storage configuration
+    /// Create an Azure storage configuration.
+    ///
+    /// # Returns
+    ///
+    /// A new `StorageConfig` instance configured for Azure Blob Storage access with default options.
     pub fn azure() -> Self {
         Self {
             storage_type: StorageType::Azure,
@@ -146,7 +163,11 @@ impl StorageConfig {
         }
     }
 
-    /// Create a GCS storage configuration
+    /// Create a GCS storage configuration.
+    ///
+    /// # Returns
+    ///
+    /// A new `StorageConfig` instance configured for Google Cloud Storage access.
     pub fn gcs() -> Self {
         Self {
             storage_type: StorageType::Gcs,
@@ -154,7 +175,11 @@ impl StorageConfig {
         }
     }
 
-    /// Get default options for all storage types
+    /// Get default options for all storage types.
+    ///
+    /// # Returns
+    ///
+    /// A HashMap containing default timeout, retry, and connection pool settings.
     pub fn default_options() -> HashMap<String, String> {
         [
             ("timeout", "1200"),
@@ -169,7 +194,16 @@ impl StorageConfig {
         .collect()
     }
 
-    /// Add a configuration option
+    /// Add a configuration option.
+    ///
+    /// # Arguments
+    ///
+    /// * `key` - The option key
+    /// * `value` - The option value
+    ///
+    /// # Returns
+    ///
+    /// The `StorageConfig` instance with the added option (for method chaining).
     pub fn with_option(
         mut self,
         key: impl Into<String> + Clone,
@@ -179,18 +213,38 @@ impl StorageConfig {
         self
     }
 
-    /// Add multiple configuration options
+    /// Add multiple configuration options.
+    ///
+    /// # Arguments
+    ///
+    /// * `options` - HashMap of options to add
+    ///
+    /// # Returns
+    ///
+    /// The `StorageConfig` instance with the added options (for method chaining).
     pub fn with_options(mut self, options: HashMap<String, String>) -> Self {
         self.options.extend(options);
         self
     }
 
-    /// Get a configuration option
+    /// Get a configuration option.
+    ///
+    /// # Arguments
+    ///
+    /// * `key` - The option key to retrieve
+    ///
+    /// # Returns
+    ///
+    /// `Some(&String)` if the option exists, `None` otherwise.
     pub fn get_option(&self, key: &str) -> Option<&String> {
         self.options.get(key)
     }
 
-    /// Get the storage type as a string
+    /// Get the storage type as a string.
+    ///
+    /// # Returns
+    ///
+    /// A string slice representing the storage type ("local", "aws", "azure", or "gcs").
     pub fn storage_type_str(&self) -> &str {
         match self.storage_type {
             StorageType::Local => "local",
