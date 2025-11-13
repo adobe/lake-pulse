@@ -14,6 +14,18 @@ use std::sync::Arc;
 use std::time::SystemTime;
 use tracing::info;
 
+/// Represents a schema change event in a Delta table's history.
+///
+/// This structure captures information about schema modifications, including
+/// the version, timestamp, the actual schema definition, and whether the change
+/// is backward-compatible or breaking.
+///
+/// # Fields
+///
+/// * `version` - The Delta table version when this schema change occurred
+/// * `timestamp` - Unix timestamp (in milliseconds) when the change was made
+/// * `schema` - The complete schema definition as a JSON value
+/// * `is_breaking` - Whether this change breaks backward compatibility (e.g., column removal, type changes)
 #[derive(Debug, Clone)]
 pub struct SchemaChange {
     #[allow(dead_code)]
@@ -23,7 +35,31 @@ pub struct SchemaChange {
     pub is_breaking: bool,
 }
 
-// Intermediate structure to hold results from parallel metadata processing
+/// Intermediate structure to hold aggregated results from parallel metadata processing.
+///
+/// This structure accumulates metrics extracted from Delta transaction log files
+/// during parallel processing. It serves as a temporary container before the final
+/// metrics are computed and stored in the `HealthMetrics` structure.
+///
+/// # Fields
+///
+/// * `clustering_columns` - Columns used for data clustering/z-ordering
+/// * `deletion_vector_count` - Number of deletion vectors found
+/// * `deletion_vector_total_size` - Total size of all deletion vectors in bytes
+/// * `deleted_rows` - Total number of rows marked as deleted
+/// * `oldest_dv_age` - Age of the oldest deletion vector in days
+/// * `total_snapshots` - Total number of table snapshots/versions
+/// * `total_historical_size` - Total size of historical data in bytes
+/// * `oldest_timestamp` - Timestamp of the oldest transaction (milliseconds)
+/// * `newest_timestamp` - Timestamp of the newest transaction (milliseconds)
+/// * `total_constraints` - Total number of table constraints
+/// * `check_constraints` - Number of CHECK constraints
+/// * `not_null_constraints` - Number of NOT NULL constraints
+/// * `unique_constraints` - Number of UNIQUE constraints
+/// * `foreign_key_constraints` - Number of FOREIGN KEY constraints
+/// * `z_order_columns` - Columns identified for potential Z-order optimization
+/// * `z_order_opportunity` - Whether Z-order optimization is recommended
+/// * `schema_changes` - List of all schema changes detected
 #[derive(Debug, Default)]
 pub struct MetadataProcessingResult {
     pub clustering_columns: Vec<String>,
@@ -45,14 +81,57 @@ pub struct MetadataProcessingResult {
     pub schema_changes: Vec<SchemaChange>,
 }
 
-/// Delta Lake-specific analyzer for processing Delta transaction logs
+/// Delta Lake-specific analyzer for processing Delta transaction logs.
+///
+/// This analyzer implements the `TableAnalyzer` trait and provides functionality
+/// to parse Delta Lake transaction logs, extract metrics, and analyze table health.
+/// It supports parallel processing of metadata files for improved performance.
+///
+/// # Fields
+///
+/// * `storage_provider` - The storage backend used to read files (S3, ADLS, local, etc.)
+/// * `parallelism` - Number of concurrent tasks for parallel metadata processing
+///
+/// # Examples
+///
+/// ```no_run
+/// use std::sync::Arc;
+/// use lake_pulse::storage::StorageProvider;
+/// use lake_pulse::analyze::delta::DeltaAnalyzer;
+///
+/// # async fn example(storage: Arc<dyn StorageProvider>) {
+/// let analyzer = DeltaAnalyzer::new(storage, 4);
+/// // Use analyzer to process Delta tables
+/// # }
+/// ```
 pub struct DeltaAnalyzer {
     storage_provider: Arc<dyn StorageProvider>,
     parallelism: usize,
 }
 
 impl DeltaAnalyzer {
-    /// Create a new DeltaAnalyzer
+    /// Create a new DeltaAnalyzer.
+    ///
+    /// # Arguments
+    ///
+    /// * `storage_provider` - The storage provider to use for reading files
+    /// * `parallelism` - The number of concurrent tasks to use for metadata processing
+    ///
+    /// # Returns
+    ///
+    /// A new `DeltaAnalyzer` instance configured with the specified storage provider and parallelism.
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// use std::sync::Arc;
+    /// use lake_pulse::storage::StorageProvider;
+    /// use lake_pulse::analyze::delta::DeltaAnalyzer;
+    ///
+    /// # async fn example(storage: Arc<dyn StorageProvider>) {
+    /// let analyzer = DeltaAnalyzer::new(storage, 4);
+    /// # }
+    /// ```
     pub fn new(storage_provider: Arc<dyn StorageProvider>, parallelism: usize) -> Self {
         Self {
             storage_provider,
@@ -60,7 +139,34 @@ impl DeltaAnalyzer {
         }
     }
 
-    /// Categorize files into data files and Delta metadata files
+    /// Categorize files into data files and Delta metadata files.
+    ///
+    /// Separates Parquet data files from Delta transaction log JSON files.
+    /// Data files are identified by `.parquet` extension, while metadata files
+    /// are JSON files within the `_delta_log/` directory.
+    ///
+    /// # Arguments
+    ///
+    /// * `objects` - All files discovered in the table location
+    ///
+    /// # Returns
+    ///
+    /// A tuple of `(data_files, metadata_files)` where:
+    /// * `data_files` - Vector of Parquet data files
+    /// * `metadata_files` - Vector of Delta transaction log JSON files
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// # use lake_pulse::analyze::delta::DeltaAnalyzer;
+    /// # use lake_pulse::storage::FileMetadata;
+    /// # use std::sync::Arc;
+    /// # fn example(analyzer: &DeltaAnalyzer, files: Vec<FileMetadata>) {
+    /// let (data_files, metadata_files) = analyzer.categorize_delta_files(files);
+    /// println!("Found {} data files and {} metadata files",
+    ///          data_files.len(), metadata_files.len());
+    /// # }
+    /// ```
     pub fn categorize_delta_files(
         &self,
         objects: Vec<FileMetadata>,
@@ -81,7 +187,40 @@ impl DeltaAnalyzer {
         (data_files, metadata_files)
     }
 
-    /// Find referenced files from Delta transaction logs
+    /// Find referenced files from Delta transaction logs.
+    ///
+    /// Parses Delta transaction log files to extract all file paths referenced
+    /// in "add" actions. This identifies which data files are currently part of
+    /// the table's active state. Processes files in parallel for performance.
+    ///
+    /// # Arguments
+    ///
+    /// * `metadata_files` - The metadata files to parse
+    ///
+    /// # Returns
+    ///
+    /// A `Result` containing:
+    /// * `Ok(Vec<String>)` - Vector of file paths referenced in the transaction logs
+    /// * `Err` - If file reading or JSON parsing fails
+    ///
+    /// # Errors
+    ///
+    /// This function will return an error if:
+    /// * Any metadata file cannot be read from storage
+    /// * JSON parsing of transaction log entries fails
+    /// * File content is not valid UTF-8
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// # use lake_pulse::analyze::delta::DeltaAnalyzer;
+    /// # use lake_pulse::storage::FileMetadata;
+    /// # async fn example(analyzer: &DeltaAnalyzer, metadata: &Vec<FileMetadata>) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    /// let referenced_files = analyzer.find_referenced_files(metadata).await?;
+    /// println!("Found {} referenced data files", referenced_files.len());
+    /// # Ok(())
+    /// # }
+    /// ```
     pub async fn find_referenced_files(
         &self,
         metadata_files: &Vec<FileMetadata>,
@@ -121,10 +260,8 @@ impl DeltaAnalyzer {
                                 .filter_map(|line| serde_json::from_str(line).ok())
                                 .collect()
                         } else {
-                            vec![
-                                serde_json::from_str(&content_str)
-                                    .map_err(|e| Box::new(e) as Box<dyn Error + Send + Sync>)?,
-                            ]
+                            vec![serde_json::from_str(&content_str)
+                                .map_err(|e| Box::new(e) as Box<dyn Error + Send + Sync>)?]
                         };
                         info!(
                             "Processed content for file={}, count={} entries, took={}",
@@ -170,7 +307,30 @@ impl DeltaAnalyzer {
         Ok(referenced_files)
     }
 
-    /// Process a single Delta metadata file and extract metrics
+    /// Process a single Delta metadata file and extract metrics.
+    ///
+    /// Reads and parses a Delta transaction log file to extract various metrics
+    /// including clustering information, deletion vectors, snapshots, schema changes,
+    /// and table constraints. This method is designed to be called in parallel for
+    /// multiple metadata files.
+    ///
+    /// # Arguments
+    ///
+    /// * `file_path` - The path to the metadata file
+    /// * `file_index` - The index of the metadata file (used as version number)
+    ///
+    /// # Returns
+    ///
+    /// A `Result` containing:
+    /// * `Ok(MetadataProcessingResult)` - Aggregated metrics from this metadata file
+    /// * `Err` - If file reading or parsing fails
+    ///
+    /// # Errors
+    ///
+    /// This function will return an error if:
+    /// * The metadata file cannot be read from storage
+    /// * The file content is not valid UTF-8
+    /// * JSON parsing fails for the transaction log entries
     pub async fn process_single_metadata_file(
         &self,
         file_path: &str,
@@ -275,7 +435,16 @@ impl DeltaAnalyzer {
         Ok(result)
     }
 
-    /// Extract deletion vector metrics from a Delta log entry
+    /// Extract deletion vector metrics from a Delta log entry.
+    ///
+    /// Analyzes "remove" actions in the transaction log to identify deletion vectors,
+    /// which are used in Delta Lake to mark rows as deleted without rewriting files.
+    /// Extracts count, size, deleted row count, and age information.
+    ///
+    /// # Arguments
+    ///
+    /// * `entry` - The Delta log entry to process
+    /// * `result` - The result object to update (mutated in place)
     fn extract_deletion_vectors(&self, entry: &Value, result: &mut MetadataProcessingResult) {
         if let Some(remove_actions) = entry.get("remove") {
             if let Some(remove_array) = remove_actions.as_object() {
@@ -302,7 +471,16 @@ impl DeltaAnalyzer {
         }
     }
 
-    /// Extract snapshot/time travel metrics from a Delta log entry
+    /// Extract snapshot/time travel metrics from a Delta log entry.
+    ///
+    /// Collects timestamp information and estimates snapshot sizes to support
+    /// time travel analysis. Tracks the oldest and newest timestamps and
+    /// accumulates total historical data size.
+    ///
+    /// # Arguments
+    ///
+    /// * `entry` - The Delta log entry to process
+    /// * `result` - The result object to update (mutated in place)
     fn extract_snapshot_metrics(&self, entry: &Value, result: &mut MetadataProcessingResult) {
         if let Some(timestamp) = entry.get("timestamp") {
             let ts = timestamp.as_u64().unwrap_or(0);
@@ -317,7 +495,17 @@ impl DeltaAnalyzer {
         }
     }
 
-    /// Extract schema and constraints from a Delta log entry
+    /// Extract schema and constraints from a Delta log entry.
+    ///
+    /// Parses metadata entries to extract schema definitions and table constraints.
+    /// Identifies various constraint types (CHECK, NOT NULL, UNIQUE, FOREIGN KEY)
+    /// and detects breaking vs. non-breaking schema changes.
+    ///
+    /// # Arguments
+    ///
+    /// * `entry` - The Delta log entry to process
+    /// * `result` - The result object to update (mutated in place)
+    /// * `current_version` - The current version of the schema
     fn extract_schema_and_constraints(
         &self,
         entry: &Value,
@@ -349,7 +537,47 @@ impl DeltaAnalyzer {
         }
     }
 
-    /// Update health metrics from Delta metadata files
+    /// Update health metrics from Delta metadata files.
+    ///
+    /// Main entry point for extracting comprehensive health metrics from Delta
+    /// transaction logs. Processes all metadata files in parallel, aggregates
+    /// results, and populates the HealthMetrics structure with deletion vector,
+    /// schema evolution, time travel, constraint, clustering, and compaction metrics.
+    ///
+    /// # Arguments
+    ///
+    /// * `metadata_files` - The metadata files to analyze
+    /// * `data_files_total_size` - Total size of all data files in bytes
+    /// * `data_files_total_files` - Total number of data files
+    /// * `metrics` - The metrics object to update (mutated in place)
+    ///
+    /// # Returns
+    ///
+    /// A `Result` indicating success or failure of the metrics extraction.
+    ///
+    /// # Errors
+    ///
+    /// This function will return an error if:
+    /// * Any metadata file cannot be read or parsed
+    /// * Schema metric calculation fails
+    /// * Parallel processing encounters errors
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// # use lake_pulse::analyze::delta::DeltaAnalyzer;
+    /// # use lake_pulse::analyze::metrics::HealthMetrics;
+    /// # use lake_pulse::storage::FileMetadata;
+    /// # async fn example(analyzer: &DeltaAnalyzer, metadata: &Vec<FileMetadata>, mut metrics: HealthMetrics) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    /// analyzer.update_metrics_from_delta_metadata(
+    ///     metadata,
+    ///     1024 * 1024 * 1024, // 1GB total data size
+    ///     100,                 // 100 data files
+    ///     &mut metrics
+    /// ).await?;
+    /// # Ok(())
+    /// # }
+    /// ```
     pub async fn update_metrics_from_delta_metadata(
         &self,
         metadata_files: &Vec<FileMetadata>,
@@ -602,7 +830,23 @@ impl DeltaAnalyzer {
         Ok(())
     }
 
-    /// Calculate deletion vector impact score
+    /// Calculate deletion vector impact score.
+    ///
+    /// Computes a score (0.0 to 1.0) indicating the impact of deletion vectors
+    /// on table performance. Higher scores indicate more significant impact and
+    /// suggest that compaction may be beneficial.
+    ///
+    /// # Arguments
+    ///
+    /// * `count` - Number of deletion vectors
+    /// * `size` - Total size of deletion vectors in bytes
+    /// * `age` - Age of the oldest deletion vector in days
+    ///
+    /// # Returns
+    ///
+    /// A score between 0.0 and 1.0, where:
+    /// * 0.0 = minimal impact
+    /// * 1.0 = high impact, compaction strongly recommended
     fn calculate_deletion_vector_impact(&self, count: usize, size: u64, age: f64) -> f64 {
         let mut impact: f64 = 0.0;
 
@@ -635,7 +879,27 @@ impl DeltaAnalyzer {
         impact.min(1.0_f64)
     }
 
-    /// Calculate schema metrics from schema changes
+    /// Calculate schema metrics from schema changes.
+    ///
+    /// Analyzes the history of schema changes to compute evolution metrics including
+    /// total changes, breaking vs. non-breaking changes, change frequency, and
+    /// stability score.
+    ///
+    /// # Arguments
+    ///
+    /// * `changes` - The schema changes to analyze
+    /// * `current_version` - The current version of the schema
+    ///
+    /// # Returns
+    ///
+    /// A `Result` containing:
+    /// * `Ok(Some(SchemaEvolutionMetrics))` - Computed schema evolution metrics
+    /// * `Ok(None)` - If no schema changes exist (though current implementation always returns Some)
+    /// * `Err` - If metric calculation fails
+    ///
+    /// # Errors
+    ///
+    /// This function may return an error if timestamp calculations overflow or fail.
     fn calculate_schema_metrics(
         &self,
         changes: Vec<SchemaChange>,
@@ -683,7 +947,20 @@ impl DeltaAnalyzer {
         }))
     }
 
-    /// Check if a schema change is breaking
+    /// Check if a schema change is breaking.
+    ///
+    /// Compares a new schema against the most recent previous schema to determine
+    /// if the change breaks backward compatibility.
+    ///
+    /// # Arguments
+    ///
+    /// * `previous_changes` - The previous schema changes
+    /// * `new_schema` - The new schema
+    ///
+    /// # Returns
+    ///
+    /// `true` if the schema change is breaking (e.g., column removal, type change),
+    /// `false` if it's backward-compatible or if there are no previous changes.
     fn is_breaking_change(&self, previous_changes: &[SchemaChange], new_schema: &Value) -> bool {
         if previous_changes.is_empty() {
             return false;
@@ -698,7 +975,21 @@ impl DeltaAnalyzer {
         self.detect_breaking_schema_changes(last_schema, new_schema)
     }
 
-    /// Detect breaking schema changes between two schemas
+    /// Detect breaking schema changes between two schemas.
+    ///
+    /// Performs detailed comparison of schema fields to identify breaking changes:
+    /// - Column removal (fields present in old schema but missing in new)
+    /// - Type changes (field type modified)
+    /// - Nullability changes (non-nullable field becoming nullable)
+    ///
+    /// # Arguments
+    ///
+    /// * `old_schema` - The old schema
+    /// * `new_schema` - The new schema
+    ///
+    /// # Returns
+    ///
+    /// `true` if any breaking changes are detected, `false` otherwise.
     fn detect_breaking_schema_changes(&self, old_schema: &Value, new_schema: &Value) -> bool {
         // Simplified breaking change detection
         // In a real implementation, this would be more sophisticated
@@ -768,7 +1059,24 @@ impl DeltaAnalyzer {
         false
     }
 
-    /// Calculate schema stability score
+    /// Calculate schema stability score.
+    ///
+    /// Computes a stability score (0.0 to 1.0) based on schema change patterns.
+    /// Penalizes frequent changes, breaking changes, and high change frequency.
+    /// Rewards stability (no recent changes).
+    ///
+    /// # Arguments
+    ///
+    /// * `total_changes` - Total number of schema changes
+    /// * `breaking_changes` - Number of breaking schema changes
+    /// * `frequency` - Frequency of schema changes (changes per day)
+    /// * `days_since_last` - Days since last schema change
+    ///
+    /// # Returns
+    ///
+    /// A score between 0.0 and 1.0, where:
+    /// * 1.0 = highly stable schema
+    /// * 0.0 = unstable schema with frequent breaking changes
     fn calculate_schema_stability_score(
         &self,
         total_changes: usize,
@@ -818,7 +1126,18 @@ impl DeltaAnalyzer {
         score.clamp(0.0_f64, 1.0_f64)
     }
 
-    /// Estimate snapshot size from a Delta log entry
+    /// Estimate snapshot size from a Delta log entry.
+    ///
+    /// Estimates the size of a snapshot by summing file sizes from "add" actions
+    /// and adding a fixed metadata overhead.
+    ///
+    /// # Arguments
+    ///
+    /// * `json` - The Delta log entry to process
+    ///
+    /// # Returns
+    ///
+    /// Estimated snapshot size in bytes (file sizes + 1KB overhead).
     fn estimate_snapshot_size(&self, json: &Value) -> u64 {
         let mut size = 0u64;
 
@@ -838,7 +1157,22 @@ impl DeltaAnalyzer {
         size + 1024 // 1KB overhead per snapshot
     }
 
-    /// Calculate storage cost impact
+    /// Calculate storage cost impact.
+    ///
+    /// Computes a score indicating the storage cost impact of historical snapshots.
+    /// Considers total size, snapshot count, and age of oldest snapshot.
+    ///
+    /// # Arguments
+    ///
+    /// * `total_size` - Total size of all snapshots in bytes
+    /// * `snapshot_count` - Total number of snapshots
+    /// * `oldest_age` - Age of the oldest snapshot in days
+    ///
+    /// # Returns
+    ///
+    /// A score between 0.0 and 1.0, where:
+    /// * 0.0 = minimal storage cost impact
+    /// * 1.0 = high storage cost, cleanup recommended
     fn calculate_storage_cost_impact(
         &self,
         total_size: u64,
@@ -880,7 +1214,22 @@ impl DeltaAnalyzer {
         impact.min(1.0_f64)
     }
 
-    /// Calculate retention efficiency
+    /// Calculate retention efficiency.
+    ///
+    /// Evaluates how efficiently the table's retention policy is configured.
+    /// Penalizes excessive snapshot counts and inappropriate retention periods.
+    ///
+    /// # Arguments
+    ///
+    /// * `snapshot_count` - Total number of snapshots
+    /// * `oldest_age` - Age of the oldest snapshot in days
+    /// * `newest_age` - Age of the newest snapshot in days
+    ///
+    /// # Returns
+    ///
+    /// A score between 0.0 and 1.0, where:
+    /// * 1.0 = optimal retention efficiency
+    /// * 0.0 = poor retention efficiency (too many snapshots or inappropriate retention period)
     fn calculate_retention_efficiency(
         &self,
         snapshot_count: usize,
@@ -911,7 +1260,23 @@ impl DeltaAnalyzer {
         efficiency.clamp(0.0_f64, 1.0_f64)
     }
 
-    /// Calculate recommended retention period
+    /// Calculate recommended retention period.
+    ///
+    /// Provides a retention period recommendation based on snapshot count and age.
+    /// Uses heuristics to balance time travel capabilities with storage costs.
+    ///
+    /// # Arguments
+    ///
+    /// * `snapshot_count` - Total number of snapshots
+    /// * `oldest_age` - Age of the oldest snapshot in days
+    ///
+    /// # Returns
+    ///
+    /// Recommended retention period in days:
+    /// * 30 days for high snapshot count (>1000) or very old data (>365 days)
+    /// * 60 days for medium snapshot count (>500) or old data (>90 days)
+    /// * 90 days for moderate snapshot count (>100) or recent data (>30 days)
+    /// * 180 days for low snapshot count and recent data
     fn calculate_recommended_retention(&self, snapshot_count: usize, oldest_age: f64) -> u64 {
         // Simple heuristic: recommend retention based on snapshot count and age
         if snapshot_count > 1000 || oldest_age > 365.0 {
@@ -925,7 +1290,23 @@ impl DeltaAnalyzer {
         }
     }
 
-    /// Extract constraints from Delta schema
+    /// Extract constraints from Delta schema.
+    ///
+    /// Parses schema fields to identify and count various types of constraints
+    /// including NOT NULL, CHECK, UNIQUE, and FOREIGN KEY constraints.
+    ///
+    /// # Arguments
+    ///
+    /// * `schema` - The Delta schema
+    ///
+    /// # Returns
+    ///
+    /// A tuple of `(total, check, not_null, unique, foreign_key)` where:
+    /// * `total` - Total number of fields in the schema
+    /// * `check` - Number of CHECK constraints
+    /// * `not_null` - Number of NOT NULL constraints
+    /// * `unique` - Number of UNIQUE constraints
+    /// * `foreign_key` - Number of FOREIGN KEY constraints
     fn extract_constraints_from_schema(
         &self,
         schema: &Value,
@@ -972,7 +1353,23 @@ impl DeltaAnalyzer {
         (total, check, not_null, unique, foreign_key)
     }
 
-    /// Calculate constraint violation risk
+    /// Calculate constraint violation risk.
+    ///
+    /// Assesses the risk of constraint violations based on the number and types
+    /// of constraints defined. Fewer constraints or missing CHECK constraints
+    /// indicate higher risk.
+    ///
+    /// # Arguments
+    ///
+    /// * `total_constraints` - Total number of constraints
+    /// * `check_constraints` - Number of check constraints
+    ///
+    /// # Returns
+    ///
+    /// A risk score between 0.0 and 1.0, where:
+    /// * 0.0 = low risk (many constraints defined)
+    /// * 0.5 = medium risk (no constraints defined)
+    /// * 1.0 = high risk (very few constraints)
     fn calculate_constraint_violation_risk(
         &self,
         total_constraints: usize,
@@ -1003,7 +1400,22 @@ impl DeltaAnalyzer {
         risk.min(1.0_f64)
     }
 
-    /// Calculate data quality score
+    /// Calculate data quality score.
+    ///
+    /// Computes an overall data quality score based on the number of constraints
+    /// and the violation risk. More constraints and lower violation risk result
+    /// in higher quality scores.
+    ///
+    /// # Arguments
+    ///
+    /// * `total_constraints` - Total number of constraints
+    /// * `violation_risk` - Violation risk score
+    ///
+    /// # Returns
+    ///
+    /// A quality score between 0.0 and 1.0, where:
+    /// * 1.0 = excellent data quality (many constraints, low violation risk)
+    /// * 0.0 = poor data quality (few constraints, high violation risk)
     fn calculate_data_quality_score(&self, total_constraints: usize, violation_risk: f64) -> f64 {
         let mut score: f64 = 1.0;
 
@@ -1020,7 +1432,20 @@ impl DeltaAnalyzer {
         score.clamp(0.0_f64, 1.0_f64)
     }
 
-    /// Calculate constraint coverage score
+    /// Calculate constraint coverage score.
+    ///
+    /// Measures what proportion of total constraints are CHECK constraints,
+    /// which are important for enforcing business rules and data quality.
+    ///
+    /// # Arguments
+    ///
+    /// * `total_constraints` - Total number of constraints
+    /// * `check_constraints` - Number of check constraints
+    ///
+    /// # Returns
+    ///
+    /// A coverage score between 0.0 and 1.0, representing the ratio of
+    /// CHECK constraints to total constraints. Returns 0.0 if no constraints exist.
     fn calculate_constraint_coverage_score(
         &self,
         total_constraints: usize,

@@ -13,6 +13,18 @@ use std::sync::Arc;
 use std::time::SystemTime;
 use tracing::info;
 
+/// Represents a schema change event in an Iceberg table's history.
+///
+/// This structure captures information about schema modifications, including
+/// the version, timestamp, the actual schema definition, and whether the change
+/// is backward-compatible or breaking.
+///
+/// # Fields
+///
+/// * `version` - The Iceberg table version when this schema change occurred
+/// * `timestamp` - Unix timestamp (in milliseconds) when the change was made
+/// * `schema` - The complete schema definition as a JSON value
+/// * `is_breaking` - Whether this change breaks backward compatibility (e.g., column removal, type changes)
 #[derive(Debug, Clone)]
 pub struct SchemaChange {
     #[allow(dead_code)]
@@ -22,7 +34,28 @@ pub struct SchemaChange {
     pub is_breaking: bool,
 }
 
-// Intermediate structure to hold results from parallel metadata processing
+/// Intermediate structure to hold aggregated results from parallel metadata processing.
+///
+/// This structure accumulates metrics extracted from Iceberg metadata files
+/// during parallel processing. It serves as a temporary container before the final
+/// metrics are computed and stored in the `HealthMetrics` structure.
+///
+/// # Fields
+///
+/// * `partition_columns` - Columns used for table partitioning
+/// * `total_snapshots` - Total number of table snapshots/versions
+/// * `total_historical_size` - Total size of historical data in bytes
+/// * `oldest_timestamp` - Timestamp of the oldest snapshot (milliseconds)
+/// * `newest_timestamp` - Timestamp of the newest snapshot (milliseconds)
+/// * `total_constraints` - Total number of table constraints
+/// * `check_constraints` - Number of CHECK constraints
+/// * `not_null_constraints` - Number of NOT NULL constraints
+/// * `unique_constraints` - Number of UNIQUE constraints
+/// * `foreign_key_constraints` - Number of FOREIGN KEY constraints
+/// * `sort_order_columns` - Columns used for sorting/ordering
+/// * `schema_changes` - List of all schema changes detected
+/// * `delete_files_count` - Number of delete files (Iceberg's merge-on-read feature)
+/// * `delete_files_size` - Total size of delete files in bytes
 #[derive(Debug, Default)]
 pub struct MetadataProcessingResult {
     pub partition_columns: Vec<String>,
@@ -41,14 +74,57 @@ pub struct MetadataProcessingResult {
     pub delete_files_size: u64,
 }
 
-/// Iceberg-specific analyzer for processing Iceberg metadata
+/// Apache Iceberg-specific analyzer for processing Iceberg metadata.
+///
+/// This analyzer implements the `TableAnalyzer` trait and provides functionality
+/// to parse Iceberg metadata files, extract metrics, and analyze table health.
+/// It supports parallel processing of metadata files for improved performance.
+///
+/// # Fields
+///
+/// * `storage_provider` - The storage backend used to read files (S3, ADLS, local, etc.)
+/// * `parallelism` - Number of concurrent tasks for parallel metadata processing
+///
+/// # Examples
+///
+/// ```no_run
+/// use std::sync::Arc;
+/// use lake_pulse::storage::StorageProvider;
+/// use lake_pulse::analyze::iceberg::IcebergAnalyzer;
+///
+/// # async fn example(storage: Arc<dyn StorageProvider>) {
+/// let analyzer = IcebergAnalyzer::new(storage, 4);
+/// // Use analyzer to process Iceberg tables
+/// # }
+/// ```
 pub struct IcebergAnalyzer {
     storage_provider: Arc<dyn StorageProvider>,
     parallelism: usize,
 }
 
 impl IcebergAnalyzer {
-    /// Create a new IcebergAnalyzer
+    /// Create a new IcebergAnalyzer.
+    ///
+    /// # Arguments
+    ///
+    /// * `storage_provider` - The storage provider to use for reading files
+    /// * `parallelism` - The number of concurrent tasks to use for metadata processing
+    ///
+    /// # Returns
+    ///
+    /// A new `IcebergAnalyzer` instance configured with the specified storage provider and parallelism.
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// use std::sync::Arc;
+    /// use lake_pulse::storage::StorageProvider;
+    /// use lake_pulse::analyze::iceberg::IcebergAnalyzer;
+    ///
+    /// # async fn example(storage: Arc<dyn StorageProvider>) {
+    /// let analyzer = IcebergAnalyzer::new(storage, 4);
+    /// # }
+    /// ```
     pub fn new(storage_provider: Arc<dyn StorageProvider>, parallelism: usize) -> Self {
         Self {
             storage_provider,
@@ -56,7 +132,34 @@ impl IcebergAnalyzer {
         }
     }
 
-    /// Categorize files into data files and Iceberg metadata files
+    /// Categorize files into data files and Iceberg metadata files.
+    ///
+    /// Separates Parquet data files from Iceberg metadata files (metadata.json, manifest files).
+    /// Data files are identified by `.parquet` extension, while metadata files include
+    /// metadata.json and manifest files.
+    ///
+    /// # Arguments
+    ///
+    /// * `objects` - All files discovered in the table location
+    ///
+    /// # Returns
+    ///
+    /// A tuple of `(data_files, metadata_files)` where:
+    /// * `data_files` - Vector of Parquet data files
+    /// * `metadata_files` - Vector of Iceberg metadata and manifest files
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// # use lake_pulse::analyze::iceberg::IcebergAnalyzer;
+    /// # use lake_pulse::storage::FileMetadata;
+    /// # use std::sync::Arc;
+    /// # fn example(analyzer: &IcebergAnalyzer, files: Vec<FileMetadata>) {
+    /// let (data_files, metadata_files) = analyzer.categorize_iceberg_files(files);
+    /// println!("Found {} data files and {} metadata files",
+    ///          data_files.len(), metadata_files.len());
+    /// # }
+    /// ```
     pub fn categorize_iceberg_files(
         &self,
         objects: Vec<FileMetadata>,
@@ -75,7 +178,40 @@ impl IcebergAnalyzer {
         (data_files, metadata_files)
     }
 
-    /// Find referenced files from Iceberg metadata
+    /// Find referenced files from Iceberg metadata.
+    ///
+    /// Parses Iceberg metadata.json and manifest files to extract all file paths
+    /// referenced in the current table snapshot. This identifies which data files
+    /// are currently part of the table's active state.
+    ///
+    /// # Arguments
+    ///
+    /// * `metadata_files` - The metadata files to parse
+    ///
+    /// # Returns
+    ///
+    /// A `Result` containing:
+    /// * `Ok(Vec<String>)` - Vector of file paths referenced in the Iceberg metadata
+    /// * `Err` - If file reading or JSON parsing fails
+    ///
+    /// # Errors
+    ///
+    /// This function will return an error if:
+    /// * Any metadata file cannot be read from storage
+    /// * JSON parsing of metadata or manifest files fails
+    /// * File content is not valid UTF-8
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// # use lake_pulse::analyze::iceberg::IcebergAnalyzer;
+    /// # use lake_pulse::storage::FileMetadata;
+    /// # async fn example(analyzer: &IcebergAnalyzer, metadata: &Vec<FileMetadata>) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    /// let referenced_files = analyzer.find_referenced_files(metadata).await?;
+    /// println!("Found {} referenced data files", referenced_files.len());
+    /// # Ok(())
+    /// # }
+    /// ```
     pub async fn find_referenced_files(
         &self,
         metadata_files: &Vec<FileMetadata>,
@@ -258,7 +394,15 @@ impl IcebergAnalyzer {
         Ok(result)
     }
 
-    /// Extract snapshot/time travel metrics from Iceberg metadata
+    /// Extract snapshot/time travel metrics from Iceberg metadata.
+    ///
+    /// Parses snapshot information from Iceberg metadata to collect timestamp data,
+    /// estimate historical data size, and extract delete file metrics (for Iceberg v2+).
+    ///
+    /// # Arguments
+    ///
+    /// * `json` - The Iceberg metadata JSON
+    /// * `result` - The result object to update (mutated in place)
     fn extract_snapshot_metrics(&self, json: &Value, result: &mut MetadataProcessingResult) {
         if let Some(snapshots) = json.get("snapshots").and_then(|s| s.as_array()) {
             result.total_snapshots = snapshots.len();
@@ -276,7 +420,8 @@ impl IcebergAnalyzer {
                     {
                         // Rough estimate based on file count
                         if let Ok(file_count) = total_data_files.parse::<u64>() {
-                            result.total_historical_size += file_count * 1024 * 1024; // Estimate 1MB per file
+                            result.total_historical_size += file_count * 1024 * 1024;
+                            // Estimate 1MB per file
                         }
                     }
 
@@ -311,7 +456,16 @@ impl IcebergAnalyzer {
         }
     }
 
-    /// Extract schema and constraints from Iceberg metadata
+    /// Extract schema and constraints from Iceberg metadata.
+    ///
+    /// Parses schema definitions to identify and count various types of constraints
+    /// and detect schema changes over time.
+    ///
+    /// # Arguments
+    ///
+    /// * `json` - The Iceberg metadata JSON
+    /// * `result` - The result object to update (mutated in place)
+    /// * `current_version` - The current version of the schema
     fn extract_schema_and_constraints(
         &self,
         json: &Value,
@@ -346,7 +500,47 @@ impl IcebergAnalyzer {
         }
     }
 
-    /// Update health metrics from Iceberg metadata files
+    /// Update health metrics from Iceberg metadata files.
+    ///
+    /// Main entry point for extracting comprehensive health metrics from Iceberg
+    /// metadata. Processes all metadata files in parallel, aggregates results, and
+    /// populates the HealthMetrics structure with delete file metrics, schema evolution,
+    /// time travel, constraint, partition, and compaction metrics.
+    ///
+    /// # Arguments
+    ///
+    /// * `metadata_files` - The metadata files to analyze
+    /// * `data_files_total_size` - Total size of all data files in bytes
+    /// * `data_files_total_files` - Total number of data files
+    /// * `metrics` - The metrics object to update (mutated in place)
+    ///
+    /// # Returns
+    ///
+    /// A `Result` indicating success or failure of the metrics extraction.
+    ///
+    /// # Errors
+    ///
+    /// This function will return an error if:
+    /// * Any metadata file cannot be read or parsed
+    /// * Schema metric calculation fails
+    /// * Parallel processing encounters errors
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// # use lake_pulse::analyze::iceberg::IcebergAnalyzer;
+    /// # use lake_pulse::analyze::metrics::HealthMetrics;
+    /// # use lake_pulse::storage::FileMetadata;
+    /// # async fn example(analyzer: &IcebergAnalyzer, metadata: &Vec<FileMetadata>, mut metrics: HealthMetrics) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    /// analyzer.update_metrics_from_iceberg_metadata(
+    ///     metadata,
+    ///     1024 * 1024 * 1024, // 1GB total data size
+    ///     100,                 // 100 data files
+    ///     &mut metrics
+    /// ).await?;
+    /// # Ok(())
+    /// # }
+    /// ```
     pub async fn update_metrics_from_iceberg_metadata(
         &self,
         metadata_files: &Vec<FileMetadata>,

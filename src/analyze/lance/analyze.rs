@@ -11,7 +11,30 @@ use std::error::Error;
 use std::sync::Arc;
 use tracing::{info, warn};
 
-/// Lance-specific analyzer for processing Lance tables
+/// Lance-specific analyzer for processing Lance tables.
+///
+/// This analyzer implements the `TableAnalyzer` trait and provides functionality
+/// to parse Lance metadata files, extract metrics, and analyze table health.
+/// Lance is a modern columnar data format designed for ML/AI workloads with
+/// built-in versioning and indexing capabilities.
+///
+/// # Fields
+///
+/// * `storage_provider` - The storage backend used to read files (S3, ADLS, local, etc.)
+/// * `parallelism` - Number of concurrent tasks for parallel metadata processing
+///
+/// # Examples
+///
+/// ```no_run
+/// use std::sync::Arc;
+/// use lake_pulse::storage::StorageProvider;
+/// use lake_pulse::analyze::lance::LanceAnalyzer;
+///
+/// # async fn example(storage: Arc<dyn StorageProvider>) {
+/// let analyzer = LanceAnalyzer::new(storage, 4);
+/// // Use analyzer to process Lance tables
+/// # }
+/// ```
 pub struct LanceAnalyzer {
     storage_provider: Arc<dyn StorageProvider>,
     #[allow(dead_code)]
@@ -19,7 +42,28 @@ pub struct LanceAnalyzer {
 }
 
 impl LanceAnalyzer {
-    /// Create a new LanceAnalyzer
+    /// Create a new LanceAnalyzer.
+    ///
+    /// # Arguments
+    ///
+    /// * `storage_provider` - The storage provider to use for reading files
+    /// * `parallelism` - The number of concurrent tasks to use for metadata processing
+    ///
+    /// # Returns
+    ///
+    /// A new `LanceAnalyzer` instance configured with the specified storage provider and parallelism.
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// use std::sync::Arc;
+    /// use lake_pulse::storage::StorageProvider;
+    /// use lake_pulse::analyze::lance::LanceAnalyzer;
+    ///
+    /// # async fn example(storage: Arc<dyn StorageProvider>) {
+    /// let analyzer = LanceAnalyzer::new(storage, 4);
+    /// # }
+    /// ```
     pub fn new(storage_provider: Arc<dyn StorageProvider>, parallelism: usize) -> Self {
         Self {
             storage_provider,
@@ -27,7 +71,34 @@ impl LanceAnalyzer {
         }
     }
 
-    /// Categorize files into data files and Lance metadata files
+    /// Categorize files into data files and Lance metadata files.
+    ///
+    /// Separates Lance data files (.lance) from metadata files (version manifests,
+    /// indices, transaction files). Lance stores data in `.lance` files and metadata
+    /// in `_versions/`, `_indices/` directories and `.manifest`/`.txn` files.
+    ///
+    /// # Arguments
+    ///
+    /// * `objects` - All files discovered in the table location
+    ///
+    /// # Returns
+    ///
+    /// A tuple of `(data_files, metadata_files)` where:
+    /// * `data_files` - Vector of .lance data files
+    /// * `metadata_files` - Vector of version manifests, indices, and transaction files
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// # use lake_pulse::analyze::lance::LanceAnalyzer;
+    /// # use lake_pulse::storage::FileMetadata;
+    /// # use std::sync::Arc;
+    /// # fn example(analyzer: &LanceAnalyzer, files: Vec<FileMetadata>) {
+    /// let (data_files, metadata_files) = analyzer.categorize_lance_files(files);
+    /// println!("Found {} data files and {} metadata files",
+    ///          data_files.len(), metadata_files.len());
+    /// # }
+    /// ```
     pub fn categorize_lance_files(
         &self,
         objects: Vec<FileMetadata>,
@@ -51,8 +122,40 @@ impl LanceAnalyzer {
         (data_files, metadata_files)
     }
 
-    /// Find referenced files from Lance metadata
-    /// For Lance, we need to read the manifest to find which data files are active
+    /// Find referenced files from Lance metadata.
+    ///
+    /// Opens the Lance dataset and reads the manifest to identify which data files
+    /// (fragments) are active in the current version. Lance uses a fragment-based
+    /// storage model where each fragment contains a subset of the table data.
+    ///
+    /// # Arguments
+    ///
+    /// * `metadata_files` - The metadata files to parse
+    ///
+    /// # Returns
+    ///
+    /// A `Result` containing:
+    /// * `Ok(Vec<String>)` - Vector of file paths for active Lance fragments
+    /// * `Err` - If dataset opening or manifest reading fails
+    ///
+    /// # Errors
+    ///
+    /// This function will return an error if:
+    /// * No version files are found in the metadata
+    /// * The Lance dataset cannot be opened
+    /// * Fragment file paths cannot be extracted from the manifest
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// # use lake_pulse::analyze::lance::LanceAnalyzer;
+    /// # use lake_pulse::storage::FileMetadata;
+    /// # async fn example(analyzer: &LanceAnalyzer, metadata: &Vec<FileMetadata>) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    /// let referenced_files = analyzer.find_referenced_files(metadata).await?;
+    /// println!("Found {} referenced data files", referenced_files.len());
+    /// # Ok(())
+    /// # }
+    /// ```
     pub async fn find_referenced_files(
         &self,
         metadata_files: &Vec<FileMetadata>,
@@ -134,7 +237,48 @@ impl LanceAnalyzer {
         Ok(referenced_files.into_iter().collect())
     }
 
-    /// Update health metrics from Lance metadata
+    /// Update health metrics from Lance metadata.
+    ///
+    /// Opens the Lance dataset and extracts comprehensive health metrics including
+    /// version history, schema evolution, fragment statistics, and index information.
+    /// Lance's native versioning and indexing capabilities provide rich metadata for
+    /// health analysis.
+    ///
+    /// # Arguments
+    ///
+    /// * `metadata_files` - The metadata files to analyze
+    /// * `data_files_total_size` - Total size of all data files in bytes
+    /// * `data_files_total_files` - Total number of data files
+    /// * `metrics` - The metrics object to update (mutated in place)
+    ///
+    /// # Returns
+    ///
+    /// A `Result` indicating success or failure of the metrics extraction.
+    ///
+    /// # Errors
+    ///
+    /// This function will return an error if:
+    /// * The Lance dataset cannot be opened
+    /// * Version history cannot be read
+    /// * Schema information cannot be extracted
+    /// * Metric calculations fail
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// # use lake_pulse::analyze::lance::LanceAnalyzer;
+    /// # use lake_pulse::analyze::metrics::HealthMetrics;
+    /// # use lake_pulse::storage::FileMetadata;
+    /// # async fn example(analyzer: &LanceAnalyzer, metadata: &Vec<FileMetadata>, mut metrics: HealthMetrics) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    /// analyzer.update_metrics_from_lance_metadata(
+    ///     metadata,
+    ///     1024 * 1024 * 1024, // 1GB total data size
+    ///     100,                 // 100 data files
+    ///     &mut metrics
+    /// ).await?;
+    /// # Ok(())
+    /// # }
+    /// ```
     pub async fn update_metrics_from_lance_metadata(
         &self,
         metadata_files: &Vec<FileMetadata>,

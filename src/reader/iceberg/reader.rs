@@ -2,10 +2,10 @@ use super::metrics::{
     FileStatistics, IcebergMetrics, ManifestStatistics, PartitionSpecMetrics, SchemaMetrics,
     SnapshotMetrics, SortOrderMetrics, TableMetadata,
 };
-use iceberg::TableIdent;
 use iceberg::io::FileIOBuilder;
 use iceberg::spec::{Snapshot, TableMetadata as IcebergTableMetadata};
 use iceberg::table::StaticTable;
+use iceberg::TableIdent;
 use std::collections::HashMap;
 use std::error::Error;
 use std::sync::Arc;
@@ -17,12 +17,27 @@ pub struct IcebergReader {
 }
 
 impl IcebergReader {
-    /// Open an Iceberg table from a metadata file location
+    /// Open an Iceberg table from a metadata file location.
     ///
     /// # Arguments
     ///
     /// * `metadata_location` - Path to the Iceberg metadata file (e.g., "s3://bucket/path/metadata/v1.metadata.json")
     /// * `storage_options` - Storage configuration options for FileIO
+    ///
+    /// # Returns
+    ///
+    /// A `Result` containing:
+    /// * `Ok(IcebergReader)` - A reader instance configured to read from the specified Iceberg table
+    /// * `Err` - If the table cannot be opened or metadata cannot be loaded
+    ///
+    /// # Errors
+    ///
+    /// This function will return an error if:
+    /// * The metadata file cannot be found or read
+    /// * The metadata file is not valid Iceberg metadata JSON
+    /// * FileIO cannot be built with the provided storage options
+    /// * Table identifier creation fails
+    /// * Network or storage access errors occur
     ///
     /// # Example
     ///
@@ -71,10 +86,26 @@ impl IcebergReader {
         Ok(Self { table })
     }
 
-    /// Extract comprehensive metrics from the Iceberg table
+    /// Extract comprehensive metrics from the Iceberg table.
     ///
     /// This method reads the table's metadata and extracts various metrics including
     /// snapshot information, schema, partition spec, sort order, and file statistics.
+    ///
+    /// # Returns
+    ///
+    /// A `Result` containing:
+    /// * `Ok(IcebergMetrics)` - Complete metrics structure with table metadata, snapshot info,
+    ///   schema details, partition specs, sort orders, file statistics, and manifest statistics
+    /// * `Err` - If metadata extraction, file reading, or metric calculation fails
+    ///
+    /// # Errors
+    ///
+    /// This function will return an error if:
+    /// * Table metadata cannot be read
+    /// * Snapshot information is invalid or missing
+    /// * Schema parsing fails
+    /// * File or manifest statistics cannot be extracted
+    /// * Any helper method encounters an error during metric extraction
     pub async fn extract_metrics(&self) -> Result<IcebergMetrics, Box<dyn Error + Send + Sync>> {
         info!("Extracting metrics from Iceberg table");
 
@@ -129,7 +160,18 @@ impl IcebergReader {
         Ok(metrics)
     }
 
-    /// Extract table metadata from Iceberg metadata
+    /// Extract table metadata from Iceberg metadata.
+    ///
+    /// # Arguments
+    ///
+    /// * `table_metadata` - The Iceberg table metadata to extract from
+    ///
+    /// # Returns
+    ///
+    /// A `Result` containing:
+    /// * `Ok(TableMetadata)` - Extracted table metadata including location, last updated timestamp,
+    ///   last column ID, last partition ID, and last sequence number
+    /// * `Err` - If metadata extraction fails (currently always succeeds)
     fn extract_table_metadata(
         &self,
         table_metadata: &IcebergTableMetadata,
@@ -148,7 +190,19 @@ impl IcebergReader {
         })
     }
 
-    /// Extract snapshot metrics from Iceberg snapshot
+    /// Extract snapshot metrics from Iceberg snapshot.
+    ///
+    /// # Arguments
+    ///
+    /// * `table_metadata` - The Iceberg table metadata containing snapshot history
+    /// * `current_snapshot` - The current snapshot to extract metrics from
+    ///
+    /// # Returns
+    ///
+    /// A `Result` containing:
+    /// * `Ok(SnapshotMetrics)` - Snapshot metrics including total snapshots, current snapshot ID,
+    ///   parent snapshot ID, timestamp, manifest list location, summary, and schema ID
+    /// * `Err` - If snapshot metrics extraction fails (currently always succeeds)
     fn extract_snapshot_metrics(
         &self,
         table_metadata: &IcebergTableMetadata,
@@ -186,7 +240,18 @@ impl IcebergReader {
         }
     }
 
-    /// Extract schema metrics from Iceberg schema
+    /// Extract schema metrics from Iceberg schema.
+    ///
+    /// # Arguments
+    ///
+    /// * `schema` - The Iceberg schema to extract metrics from
+    ///
+    /// # Returns
+    ///
+    /// A `Result` containing:
+    /// * `Ok(SchemaMetrics)` - Schema metrics including schema ID, total fields, nested fields,
+    ///   partition fields, required fields, and optional fields
+    /// * `Err` - If schema metrics extraction fails (currently always succeeds)
     fn extract_schema_metrics(
         &self,
         schema: &iceberg::spec::SchemaRef,
@@ -224,7 +289,18 @@ impl IcebergReader {
         })
     }
 
-    /// Extract partition spec metrics from Iceberg partition spec
+    /// Extract partition spec metrics from Iceberg partition spec.
+    ///
+    /// # Arguments
+    ///
+    /// * `spec` - The Iceberg partition spec to extract metrics from
+    ///
+    /// # Returns
+    ///
+    /// A `Result` containing:
+    /// * `Ok(PartitionSpecMetrics)` - Partition spec metrics including spec ID, partition fields,
+    ///   partition field count, identity partition count, transform types, and estimated partition count
+    /// * `Err` - If partition spec metrics extraction fails (currently always succeeds)
     fn extract_partition_spec_metrics(
         &self,
         spec: &iceberg::spec::PartitionSpecRef,
@@ -247,7 +323,18 @@ impl IcebergReader {
         })
     }
 
-    /// Extract sort order metrics from Iceberg sort order
+    /// Extract sort order metrics from Iceberg sort order.
+    ///
+    /// # Arguments
+    ///
+    /// * `sort_order` - The Iceberg sort order to extract metrics from
+    ///
+    /// # Returns
+    ///
+    /// A `Result` containing:
+    /// * `Ok(SortOrderMetrics)` - Sort order metrics including order ID, sort fields, field count,
+    ///   and sort directions
+    /// * `Err` - If sort order metrics extraction fails (currently always succeeds)
     fn extract_sort_order_metrics(
         &self,
         sort_order: &iceberg::spec::SortOrderRef,
@@ -277,7 +364,28 @@ impl IcebergReader {
         })
     }
 
-    /// Extract file statistics from the Iceberg table
+    /// Extract file statistics from the Iceberg table.
+    ///
+    /// Reads manifest files to collect statistics about data files including counts,
+    /// sizes, and record counts.
+    ///
+    /// # Arguments
+    ///
+    /// * `current_snapshot` - The current snapshot to extract file statistics from
+    ///
+    /// # Returns
+    ///
+    /// A `Result` containing:
+    /// * `Ok(FileStatistics)` - File statistics including total files, total size, average file size,
+    ///   total records, and average records per file
+    /// * `Err` - If manifest reading or file statistics calculation fails
+    ///
+    /// # Errors
+    ///
+    /// This function will return an error if:
+    /// * Manifest list cannot be read
+    /// * Manifest entries cannot be loaded
+    /// * File statistics cannot be calculated
     async fn extract_file_statistics(
         &self,
         current_snapshot: Option<&Arc<Snapshot>>,
@@ -361,7 +469,28 @@ impl IcebergReader {
         })
     }
 
-    /// Extract manifest statistics from the Iceberg table
+    /// Extract manifest statistics from the Iceberg table.
+    ///
+    /// Reads the manifest list to collect statistics about manifest files including
+    /// counts, sizes, and content types.
+    ///
+    /// # Arguments
+    ///
+    /// * `current_snapshot` - The current snapshot to extract manifest statistics from
+    ///
+    /// # Returns
+    ///
+    /// A `Result` containing:
+    /// * `Ok(ManifestStatistics)` - Manifest statistics including total manifests, total size,
+    ///   average manifest size, data manifests count, and delete manifests count
+    /// * `Err` - If manifest list reading or statistics calculation fails
+    ///
+    /// # Errors
+    ///
+    /// This function will return an error if:
+    /// * Manifest list cannot be read
+    /// * Manifest entries cannot be loaded
+    /// * Manifest statistics cannot be calculated
     async fn extract_manifest_statistics(
         &self,
         current_snapshot: Option<&Arc<Snapshot>>,

@@ -1,7 +1,7 @@
 use crate::storage::FileMetadata;
 use log::info;
-use std::future::Future;
 use std::collections::LinkedList;
+use std::future::Future;
 use std::time::{Duration, SystemTime};
 
 /// Check if content is NDJSON format (used by Delta logs)

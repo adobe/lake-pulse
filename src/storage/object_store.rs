@@ -1,32 +1,49 @@
 use super::config::{StorageConfig, StorageType};
 use super::error::{StorageError, StorageResult};
-use super::provider::{FileMetadata, StorageProvider, string_to_path};
+use super::provider::{string_to_path, FileMetadata, StorageProvider};
 use crate::util::retry::retry_with_max_retries;
 use async_trait::async_trait;
 use bytes::Bytes;
 use futures::stream::StreamExt;
 use object_store::{
-    ClientOptions, ObjectStore, RetryConfig, aws::AmazonS3Builder, azure::MicrosoftAzureBuilder,
-    gcp::GoogleCloudStorageBuilder, local::LocalFileSystem,
+    aws::AmazonS3Builder, azure::MicrosoftAzureBuilder, gcp::GoogleCloudStorageBuilder,
+    local::LocalFileSystem, ClientOptions, ObjectStore, RetryConfig,
 };
 use regex::Regex;
 use std::collections::HashMap;
-use std::future::Future;
 use std::fmt::{Debug, Formatter};
+use std::future::Future;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 use tracing::info;
 
 /// Generic storage provider that works with any object_store backend
-pub struct GenericStorageProvider {
+pub struct ObjectStoreProvider {
     pub config: StorageConfig,
     pub store: Arc<dyn ObjectStore>,
     pub base_path: String,
 }
 
-impl GenericStorageProvider {
-    /// Create a new generic storage provider from configuration
+impl ObjectStoreProvider {
+    /// Create a new generic storage provider from configuration.
+    ///
+    /// # Arguments
+    ///
+    /// * `config` - Storage configuration specifying the storage type and options
+    ///
+    /// # Returns
+    ///
+    /// A `Result` containing:
+    /// * `Ok(GenericStorageProvider)` - A configured storage provider ready to use
+    /// * `Err(StorageError)` - If the storage backend cannot be initialized
+    ///
+    /// # Errors
+    ///
+    /// This function will return an error if:
+    /// * The storage configuration is invalid
+    /// * Required configuration options are missing
+    /// * The storage backend cannot be created (e.g., invalid credentials, network issues)
     pub async fn new(config: StorageConfig) -> StorageResult<Self> {
         let (store, base_path) = Self::build_store(&config).await?;
 
@@ -37,7 +54,24 @@ impl GenericStorageProvider {
         })
     }
 
-    /// Build the appropriate object store based on configuration
+    /// Build the appropriate object store based on configuration.
+    ///
+    /// # Arguments
+    ///
+    /// * `config` - Storage configuration specifying the storage type and options
+    ///
+    /// # Returns
+    ///
+    /// A `Result` containing:
+    /// * `Ok((Box<dyn ObjectStore>, String))` - A tuple of the object store and base path/URL
+    /// * `Err(StorageError)` - If the object store cannot be built
+    ///
+    /// # Errors
+    ///
+    /// This function will return an error if:
+    /// * The storage type is not supported
+    /// * Required configuration options are missing for the storage type
+    /// * The object store backend cannot be initialized
     async fn build_store(config: &StorageConfig) -> StorageResult<(Box<dyn ObjectStore>, String)> {
         match config.storage_type {
             StorageType::Local => Self::build_local_store(config),
@@ -47,7 +81,25 @@ impl GenericStorageProvider {
         }
     }
 
-    /// Build a local filesystem store
+    /// Build a local filesystem store.
+    ///
+    /// # Arguments
+    ///
+    /// * `config` - Storage configuration with 'path' option specifying the local directory
+    ///
+    /// # Returns
+    ///
+    /// A `Result` containing:
+    /// * `Ok((Box<dyn ObjectStore>, String))` - A tuple of the local filesystem store and canonical path
+    /// * `Err(StorageError)` - If the local store cannot be created
+    ///
+    /// # Errors
+    ///
+    /// This function will return an error if:
+    /// * The 'path' option is missing from configuration
+    /// * The path cannot be canonicalized (doesn't exist or permission denied)
+    /// * The path is not a directory
+    /// * The local filesystem store cannot be created
     fn build_local_store(config: &StorageConfig) -> StorageResult<(Box<dyn ObjectStore>, String)> {
         let path = config.options.get("path").ok_or_else(|| {
             StorageError::ConfigError("Local storage requires 'path' option".to_string())
@@ -77,6 +129,15 @@ impl GenericStorageProvider {
         Ok((Box::new(store), base_path_str))
     }
 
+    /// Build connection options from configuration.
+    ///
+    /// # Arguments
+    ///
+    /// * `config` - Storage configuration with optional timeout and connection settings
+    ///
+    /// # Returns
+    ///
+    /// A `ClientOptions` instance configured with timeout and connection settings from the config.
     fn build_connection_options(config: &StorageConfig) -> ClientOptions {
         let mut client_options = ClientOptions::default();
         if let Some(timeout_str) = config.options.get("timeout") {
@@ -123,6 +184,15 @@ impl GenericStorageProvider {
         client_options
     }
 
+    /// Build retry options from configuration.
+    ///
+    /// # Arguments
+    ///
+    /// * `config` - Storage configuration with optional max_retries and retry_timeout settings
+    ///
+    /// # Returns
+    ///
+    /// A `RetryConfig` instance configured with retry settings from the config.
     fn build_retry_options(config: &StorageConfig) -> RetryConfig {
         let default_retry_config = RetryConfig::default();
         let max_retries = config
@@ -142,7 +212,15 @@ impl GenericStorageProvider {
         }
     }
 
-    /// Get max retries from config
+    /// Get max retries from config.
+    ///
+    /// # Arguments
+    ///
+    /// * `config` - Storage configuration with optional max_retries setting
+    ///
+    /// # Returns
+    ///
+    /// The maximum number of retries (defaults to 10 if not specified).
     fn get_max_retries(config: &StorageConfig) -> usize {
         config
             .options
@@ -151,7 +229,18 @@ impl GenericStorageProvider {
             .unwrap_or(10)
     }
 
-    /// Retry wrapper for operations that may fail due to transient network errors
+    /// Retry wrapper for operations that may fail due to transient network errors.
+    ///
+    /// # Arguments
+    ///
+    /// * `operation_name` - Name of the operation for logging purposes
+    /// * `operation` - The async operation to retry
+    ///
+    /// # Returns
+    ///
+    /// A `Result` containing:
+    /// * `Ok(T)` - The successful result from the operation
+    /// * `Err(StorageError)` - If all retry attempts fail
     async fn retry_operation<F, Fut, T>(
         &self,
         operation_name: &str,
@@ -165,7 +254,24 @@ impl GenericStorageProvider {
         retry_with_max_retries(max_retries, operation_name, operation).await
     }
 
-    /// Build an AWS S3 store
+    /// Build an AWS S3 store.
+    ///
+    /// # Arguments
+    ///
+    /// * `config` - Storage configuration with AWS S3 options (bucket, region, credentials, etc.)
+    ///
+    /// # Returns
+    ///
+    /// A `Result` containing:
+    /// * `Ok((Box<dyn ObjectStore>, String))` - A tuple of the S3 store and base S3 URL
+    /// * `Err(StorageError)` - If the S3 store cannot be created
+    ///
+    /// # Errors
+    ///
+    /// This function will return an error if:
+    /// * Required S3 configuration options are missing
+    /// * AWS credentials are invalid
+    /// * The S3 store cannot be initialized
     fn build_aws_store(config: &StorageConfig) -> StorageResult<(Box<dyn ObjectStore>, String)> {
         let mut builder = AmazonS3Builder::new()
             .with_client_options(Self::build_connection_options(config))
@@ -226,7 +332,24 @@ impl GenericStorageProvider {
         Ok((Box::new(store), base_url))
     }
 
-    /// Build an Azure store
+    /// Build an Azure store.
+    ///
+    /// # Arguments
+    ///
+    /// * `config` - Storage configuration with Azure options (account, container, credentials, etc.)
+    ///
+    /// # Returns
+    ///
+    /// A `Result` containing:
+    /// * `Ok((Box<dyn ObjectStore>, String))` - A tuple of the Azure store and base Azure URL
+    /// * `Err(StorageError)` - If the Azure store cannot be created
+    ///
+    /// # Errors
+    ///
+    /// This function will return an error if:
+    /// * Required Azure configuration options are missing
+    /// * Azure credentials are invalid
+    /// * The Azure store cannot be initialized
     fn build_azure_store(config: &StorageConfig) -> StorageResult<(Box<dyn ObjectStore>, String)> {
         let mut builder = MicrosoftAzureBuilder::new()
             .with_client_options(Self::build_connection_options(config))
@@ -322,7 +445,24 @@ impl GenericStorageProvider {
         Ok((Box::new(store), base_url))
     }
 
-    /// Build a GCS store
+    /// Build a GCS store.
+    ///
+    /// # Arguments
+    ///
+    /// * `config` - Storage configuration with GCS options (bucket, credentials, etc.)
+    ///
+    /// # Returns
+    ///
+    /// A `Result` containing:
+    /// * `Ok((Box<dyn ObjectStore>, String))` - A tuple of the GCS store and base GCS URL
+    /// * `Err(StorageError)` - If the GCS store cannot be created
+    ///
+    /// # Errors
+    ///
+    /// This function will return an error if:
+    /// * Required GCS configuration options are missing
+    /// * GCS credentials are invalid
+    /// * The GCS store cannot be initialized
     fn build_gcs_store(config: &StorageConfig) -> StorageResult<(Box<dyn ObjectStore>, String)> {
         let mut builder = GoogleCloudStorageBuilder::new()
             .with_client_options(Self::build_connection_options(config))
@@ -367,16 +507,28 @@ impl GenericStorageProvider {
         Ok((Box::new(store), base_url))
     }
 
-    /// List multiple partitions in parallel with bounded concurrency
+    /// List multiple partitions in parallel with bounded concurrency.
     ///
     /// This method lists each partition concurrently, which can provide significant
     /// speedup for tables with many partitions.
     ///
     /// # Arguments
+    ///
     /// * `partitions` - Vector of partition paths to list
+    /// * `parallelism` - Maximum number of concurrent partition listing operations
     ///
     /// # Returns
-    /// All files from all partitions combined
+    ///
+    /// A `Result` containing:
+    /// * `Ok(Vec<FileMetadata>)` - All files from all partitions combined
+    /// * `Err(StorageError)` - If any partition listing fails
+    ///
+    /// # Errors
+    ///
+    /// This function will return an error if:
+    /// * Any partition cannot be listed
+    /// * Network or storage access errors occur
+    /// * File metadata cannot be retrieved
     async fn list_partitions_parallel(
         &self,
         partitions: Vec<String>,
@@ -453,7 +605,7 @@ impl GenericStorageProvider {
 }
 
 #[async_trait]
-impl StorageProvider for GenericStorageProvider {
+impl StorageProvider for ObjectStoreProvider {
     fn base_path(&self) -> &str {
         &self.base_path
     }
@@ -713,7 +865,7 @@ impl StorageProvider for GenericStorageProvider {
     }
 }
 
-impl Debug for GenericStorageProvider {
+impl Debug for ObjectStoreProvider {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         write!(
             f,

@@ -10,7 +10,31 @@ use std::error::Error;
 use std::sync::Arc;
 use tracing::info;
 
-/// Apache Hudi-specific analyzer for processing Hudi tables
+/// Apache Hudi-specific analyzer for processing Hudi tables.
+///
+/// This analyzer implements the `TableAnalyzer` trait and provides functionality
+/// to parse Hudi timeline files, extract metrics, and analyze table health.
+/// Note: This is a basic implementation that provides default metrics. A full
+/// implementation would parse Hudi's timeline files (.commit, .deltacommit, etc.)
+/// and hoodie.properties for comprehensive analysis.
+///
+/// # Fields
+///
+/// * `storage_provider` - The storage backend used to read files (S3, ADLS, local, etc.)
+/// * `parallelism` - Number of concurrent tasks for parallel metadata processing
+///
+/// # Examples
+///
+/// ```no_run
+/// use std::sync::Arc;
+/// use lake_pulse::storage::StorageProvider;
+/// use lake_pulse::analyze::hudi::HudiAnalyzer;
+///
+/// # async fn example(storage: Arc<dyn StorageProvider>) {
+/// let analyzer = HudiAnalyzer::new(storage, 4);
+/// // Use analyzer to process Hudi tables
+/// # }
+/// ```
 pub struct HudiAnalyzer {
     #[allow(dead_code)]
     storage_provider: Arc<dyn StorageProvider>,
@@ -19,7 +43,28 @@ pub struct HudiAnalyzer {
 }
 
 impl HudiAnalyzer {
-    /// Create a new HudiAnalyzer
+    /// Create a new HudiAnalyzer.
+    ///
+    /// # Arguments
+    ///
+    /// * `storage_provider` - The storage provider to use for reading files
+    /// * `parallelism` - The number of concurrent tasks to use for metadata processing
+    ///
+    /// # Returns
+    ///
+    /// A new `HudiAnalyzer` instance configured with the specified storage provider and parallelism.
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// use std::sync::Arc;
+    /// use lake_pulse::storage::StorageProvider;
+    /// use lake_pulse::analyze::hudi::HudiAnalyzer;
+    ///
+    /// # async fn example(storage: Arc<dyn StorageProvider>) {
+    /// let analyzer = HudiAnalyzer::new(storage, 4);
+    /// # }
+    /// ```
     pub fn new(storage_provider: Arc<dyn StorageProvider>, parallelism: usize) -> Self {
         Self {
             storage_provider,
@@ -27,7 +72,34 @@ impl HudiAnalyzer {
         }
     }
 
-    /// Categorize files into data files and Hudi metadata files
+    /// Categorize files into data files and Hudi metadata files.
+    ///
+    /// Separates Parquet data files from Hudi metadata files in the `.hoodie` directory.
+    /// Data files are Parquet files outside the `.hoodie` directory, while metadata files
+    /// include timeline files (.commit, .deltacommit, .clean, etc.) and hoodie.properties.
+    ///
+    /// # Arguments
+    ///
+    /// * `objects` - All files discovered in the table location
+    ///
+    /// # Returns
+    ///
+    /// A tuple of `(data_files, metadata_files)` where:
+    /// * `data_files` - Vector of Parquet data files
+    /// * `metadata_files` - Vector of Hudi timeline and configuration files
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// # use lake_pulse::analyze::hudi::HudiAnalyzer;
+    /// # use lake_pulse::storage::FileMetadata;
+    /// # use std::sync::Arc;
+    /// # fn example(analyzer: &HudiAnalyzer, files: Vec<FileMetadata>) {
+    /// let (data_files, metadata_files) = analyzer.categorize_hudi_files(files);
+    /// println!("Found {} data files and {} metadata files",
+    ///          data_files.len(), metadata_files.len());
+    /// # }
+    /// ```
     pub fn categorize_hudi_files(
         &self,
         objects: Vec<FileMetadata>,
@@ -51,11 +123,48 @@ impl HudiAnalyzer {
         (data_files, metadata_files)
     }
 
-    /// Find referenced files from Hudi metadata
+    /// Find referenced files from Hudi metadata.
     ///
-    /// For Hudi tables, this would involve parsing the timeline files
-    /// in the .hoodie directory to find active file slices.
-    /// This is a basic implementation that returns an empty list.
+    /// For Hudi tables, this would involve parsing the timeline files in the `.hoodie`
+    /// directory to find active file slices. This is a basic implementation that returns
+    /// an empty list.
+    ///
+    /// # Arguments
+    ///
+    /// * `_metadata_files` - The metadata files to parse (currently unused)
+    ///
+    /// # Returns
+    ///
+    /// A `Result` containing:
+    /// * `Ok(Vec<String>)` - Empty vector in this basic implementation
+    /// * `Err` - Currently never returns an error
+    ///
+    /// # Errors
+    ///
+    /// This basic implementation does not return errors. A full implementation would
+    /// return an error if:
+    /// * Timeline files cannot be read from storage
+    /// * Commit metadata parsing fails
+    /// * File content is not valid UTF-8
+    ///
+    /// # Note
+    ///
+    /// A full implementation would:
+    /// 1. Parse .hoodie timeline files (.commit, .deltacommit, etc.)
+    /// 2. Extract file references from commit metadata
+    /// 3. Build the active file slice view
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// # use lake_pulse::analyze::hudi::HudiAnalyzer;
+    /// # use lake_pulse::storage::FileMetadata;
+    /// # async fn example(analyzer: &HudiAnalyzer, metadata: &Vec<FileMetadata>) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    /// let referenced_files = analyzer.find_referenced_files(metadata).await?;
+    /// println!("Found {} referenced data files", referenced_files.len());
+    /// # Ok(())
+    /// # }
+    /// ```
     pub async fn find_referenced_files(
         &self,
         _metadata_files: &Vec<FileMetadata>,
@@ -72,10 +181,57 @@ impl HudiAnalyzer {
         Ok(referenced_files.into_iter().collect())
     }
 
-    /// Update health metrics from Hudi metadata files
+    /// Update health metrics from Hudi metadata files.
     ///
-    /// This is a basic implementation that sets default values.
-    /// A full implementation would parse Hudi timeline and metadata files.
+    /// This is a basic implementation that sets default/placeholder values for all metrics.
+    /// A full implementation would parse Hudi timeline files (.commit, .deltacommit, .clean, etc.)
+    /// and hoodie.properties to extract actual metrics.
+    ///
+    /// # Arguments
+    ///
+    /// * `_metadata_files` - The metadata files to analyze (currently unused)
+    /// * `_data_files_total_size` - Total size of all data files in bytes (currently unused)
+    /// * `_data_files_total_files` - Total number of data files (currently unused)
+    /// * `metrics` - The metrics object to update (mutated in place)
+    ///
+    /// # Returns
+    ///
+    /// A `Result` indicating success or failure of the metrics extraction.
+    ///
+    /// # Errors
+    ///
+    /// This basic implementation does not return errors. A full implementation would
+    /// return an error if:
+    /// * Any metadata file cannot be read or parsed
+    /// * Timeline file parsing fails
+    /// * Metric calculations fail due to invalid data
+    ///
+    /// # Note
+    ///
+    /// Currently sets default values for:
+    /// * File compaction metrics (low priority, no opportunities)
+    /// * Schema evolution metrics (no changes, perfect stability)
+    /// * Time travel metrics (no snapshots)
+    /// * Deletion vector metrics (not applicable for Hudi)
+    /// * Table constraints metrics (no constraints)
+    /// * Clustering info (no clustering)
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// # use lake_pulse::analyze::hudi::HudiAnalyzer;
+    /// # use lake_pulse::analyze::metrics::HealthMetrics;
+    /// # use lake_pulse::storage::FileMetadata;
+    /// # async fn example(analyzer: &HudiAnalyzer, metadata: &Vec<FileMetadata>, mut metrics: HealthMetrics) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    /// analyzer.update_metrics_from_hudi_metadata(
+    ///     metadata,
+    ///     1024 * 1024 * 1024, // 1GB total data size
+    ///     100,                 // 100 data files
+    ///     &mut metrics
+    /// ).await?;
+    /// # Ok(())
+    /// # }
+    /// ```
     pub async fn update_metrics_from_hudi_metadata(
         &self,
         _metadata_files: &Vec<FileMetadata>,
