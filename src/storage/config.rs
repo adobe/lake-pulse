@@ -39,8 +39,8 @@ pub enum StorageType {
 /// let config = StorageConfig::new("s3")
 ///     .with_option("bucket", "my-bucket")
 ///     .with_option("region", "us-east-1")
-///     .with_option("access_key_id", "AKIAIOSFODNN7EXAMPLE")
-///     .with_option("secret_access_key", "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY");
+///     .with_option("access_key_id", "ACCESS_KEY")
+///     .with_option("secret_access_key", "SECRET_ACCESS_KEY");
 /// ```
 ///
 /// ## Azure
@@ -440,14 +440,14 @@ mod tests {
         let config = StorageConfig::aws()
             .with_option("bucket", "my-bucket")
             .with_option("region", "us-west-2")
-            .with_option("access_key_id", "AKIAIOSFODNN7EXAMPLE");
+            .with_option("access_key_id", "AxxxxxxxxxNN7EXAMPLE");
 
         assert_eq!(config.storage_type, StorageType::Aws);
         assert_eq!(config.get_option("bucket"), Some(&"my-bucket".to_string()));
         assert_eq!(config.get_option("region"), Some(&"us-west-2".to_string()));
         assert_eq!(
             config.get_option("access_key_id"),
-            Some(&"AKIAIOSFODNN7EXAMPLE".to_string())
+            Some(&"AxxxxxxxxxNN7EXAMPLE".to_string())
         );
     }
 
