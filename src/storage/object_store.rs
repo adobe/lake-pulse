@@ -875,3 +875,477 @@ impl Debug for ObjectStoreProvider {
         )
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::fs;
+    use tempfile::TempDir;
+
+    #[test]
+    fn test_build_connection_options_default() {
+        let config = StorageConfig::local();
+        let _options = ObjectStoreProvider::build_connection_options(&config);
+
+        // Default options should be set
+        // We can't directly inspect ClientOptions, but we can verify it doesn't panic
+        assert!(true);
+    }
+
+    #[test]
+    fn test_build_connection_options_with_timeout() {
+        let config = StorageConfig::local()
+            .with_option("timeout", "60")
+            .with_option("connect_timeout", "10");
+
+        let _options = ObjectStoreProvider::build_connection_options(&config);
+        // Verify it builds without panicking
+        assert!(true);
+    }
+
+    #[test]
+    fn test_build_connection_options_disabled_timeout() {
+        let config = StorageConfig::local()
+            .with_option("timeout", "disabled")
+            .with_option("connect_timeout", "0");
+
+        let _options = ObjectStoreProvider::build_connection_options(&config);
+        assert!(true);
+    }
+
+    #[test]
+    fn test_build_connection_options_with_pool_settings() {
+        let config = StorageConfig::local()
+            .with_option("pool_idle_timeout", "30")
+            .with_option("pool_max_idle_per_host", "10");
+
+        let _options = ObjectStoreProvider::build_connection_options(&config);
+        assert!(true);
+    }
+
+    #[test]
+    fn test_build_connection_options_invalid_values() {
+        let config = StorageConfig::local()
+            .with_option("timeout", "invalid")
+            .with_option("pool_max_idle_per_host", "not_a_number");
+
+        // Should handle invalid values gracefully
+        let _options = ObjectStoreProvider::build_connection_options(&config);
+        assert!(true);
+    }
+
+    #[test]
+    fn test_build_retry_options_default() {
+        let config = StorageConfig::local();
+        let retry_config = ObjectStoreProvider::build_retry_options(&config);
+
+        // Should use default values from config
+        assert!(retry_config.max_retries > 0);
+    }
+
+    #[test]
+    fn test_build_retry_options_custom() {
+        let config = StorageConfig::local()
+            .with_option("max_retries", "5")
+            .with_option("retry_timeout", "300");
+
+        let retry_config = ObjectStoreProvider::build_retry_options(&config);
+        assert_eq!(retry_config.max_retries, 5);
+        assert_eq!(retry_config.retry_timeout, Duration::from_secs(300));
+    }
+
+    #[test]
+    fn test_build_retry_options_invalid_values() {
+        let config = StorageConfig::local()
+            .with_option("max_retries", "invalid")
+            .with_option("retry_timeout", "not_a_number");
+
+        let retry_config = ObjectStoreProvider::build_retry_options(&config);
+        // Should fall back to defaults
+        assert!(retry_config.max_retries > 0);
+    }
+
+    #[test]
+    fn test_get_max_retries_default() {
+        let config = StorageConfig::local();
+        let max_retries = ObjectStoreProvider::get_max_retries(&config);
+
+        // Should return default value from config (20) or fallback (10)
+        // StorageConfig::local() sets default_options which includes max_retries=20
+        assert_eq!(max_retries, 20);
+    }
+
+    #[test]
+    fn test_get_max_retries_custom() {
+        let config = StorageConfig::local().with_option("max_retries", "15");
+        let max_retries = ObjectStoreProvider::get_max_retries(&config);
+
+        assert_eq!(max_retries, 15);
+    }
+
+    #[test]
+    fn test_get_max_retries_invalid() {
+        let config = StorageConfig::local().with_option("max_retries", "invalid");
+        let max_retries = ObjectStoreProvider::get_max_retries(&config);
+
+        // Should fall back to default
+        assert_eq!(max_retries, 10);
+    }
+
+    #[tokio::test]
+    async fn test_new_local_provider() {
+        let temp_dir = TempDir::new().unwrap();
+        let temp_path = temp_dir.path().to_str().unwrap();
+
+        let config = StorageConfig::local().with_option("path", temp_path);
+        let provider = ObjectStoreProvider::new(config).await;
+
+        assert!(provider.is_ok());
+        let provider = provider.unwrap();
+        assert!(provider.base_path.contains(temp_path));
+        assert_eq!(provider.config.storage_type, StorageType::Local);
+    }
+
+    #[tokio::test]
+    async fn test_new_local_provider_invalid_path() {
+        let config = StorageConfig::local().with_option("path", "/nonexistent/invalid/path");
+        let provider = ObjectStoreProvider::new(config).await;
+
+        assert!(provider.is_err());
+        match provider {
+            Err(StorageError::ConfigError(msg)) => {
+                assert!(msg.contains("Failed to resolve path"));
+            }
+            _ => panic!("Expected ConfigError"),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_new_local_provider_missing_path() {
+        let config = StorageConfig::local();
+        let provider = ObjectStoreProvider::new(config).await;
+
+        assert!(provider.is_err());
+        match provider {
+            Err(StorageError::ConfigError(msg)) => {
+                assert!(msg.contains("path"));
+            }
+            _ => panic!("Expected ConfigError for missing path"),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_new_local_provider_file_not_directory() {
+        let temp_dir = TempDir::new().unwrap();
+        let file_path = temp_dir.path().join("test_file.txt");
+        fs::write(&file_path, "test content").unwrap();
+
+        let config = StorageConfig::local().with_option("path", file_path.to_str().unwrap());
+        let provider = ObjectStoreProvider::new(config).await;
+
+        assert!(provider.is_err());
+        match provider {
+            Err(StorageError::ConfigError(msg)) => {
+                assert!(msg.contains("not a directory"));
+            }
+            _ => panic!("Expected ConfigError for file instead of directory"),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_provider_base_path() {
+        let temp_dir = TempDir::new().unwrap();
+        let temp_path = temp_dir.path().to_str().unwrap();
+
+        let config = StorageConfig::local().with_option("path", temp_path);
+        let provider = ObjectStoreProvider::new(config).await.unwrap();
+
+        let base_path = provider.base_path();
+        assert!(!base_path.is_empty());
+        assert!(base_path.contains(temp_path));
+    }
+
+    #[tokio::test]
+    async fn test_provider_options() {
+        let temp_dir = TempDir::new().unwrap();
+        let temp_path = temp_dir.path().to_str().unwrap();
+
+        let config = StorageConfig::local()
+            .with_option("path", temp_path)
+            .with_option("custom_option", "custom_value");
+        let provider = ObjectStoreProvider::new(config).await.unwrap();
+
+        let options = provider.options();
+        assert!(options.contains_key("path"));
+        assert!(options.contains_key("custom_option"));
+        assert_eq!(options.get("custom_option").unwrap(), "custom_value");
+    }
+
+    #[tokio::test]
+    async fn test_provider_clean_options() {
+        let temp_dir = TempDir::new().unwrap();
+        let temp_path = temp_dir.path().to_str().unwrap();
+
+        let config = StorageConfig::local()
+            .with_option("path", temp_path)
+            .with_option("timeout", "60")
+            .with_option("max_retries", "10")
+            .with_option("custom_option", "custom_value");
+        let provider = ObjectStoreProvider::new(config).await.unwrap();
+
+        let clean_options = provider.clean_options();
+
+        // Clean options should exclude internal retry/timeout options
+        assert!(!clean_options.contains_key("timeout"));
+        assert!(!clean_options.contains_key("max_retries"));
+        assert!(!clean_options.contains_key("retry_timeout"));
+        assert!(!clean_options.contains_key("connect_timeout"));
+
+        // But should include custom options
+        assert!(clean_options.contains_key("path"));
+        assert!(clean_options.contains_key("custom_option"));
+    }
+
+    #[tokio::test]
+    async fn test_uri_from_path_local() {
+        let temp_dir = TempDir::new().unwrap();
+        let temp_path = temp_dir.path().to_str().unwrap();
+
+        let config = StorageConfig::local().with_option("path", temp_path);
+        let provider = ObjectStoreProvider::new(config).await.unwrap();
+
+        let uri = provider.uri_from_path("test/file.txt");
+        assert!(uri.starts_with("file://"));
+        assert!(uri.contains("test/file.txt"));
+    }
+
+    #[tokio::test]
+    async fn test_uri_from_path_with_base_path() {
+        let temp_dir = TempDir::new().unwrap();
+        let temp_path = temp_dir.path().to_str().unwrap();
+
+        let config = StorageConfig::local().with_option("path", temp_path);
+        let provider = ObjectStoreProvider::new(config).await.unwrap();
+
+        // Test with path that already contains base_path
+        let full_path = format!("{}/test/file.txt", provider.base_path);
+        let uri = provider.uri_from_path(&full_path);
+        assert!(uri.starts_with("file://"));
+    }
+
+    #[tokio::test]
+    async fn test_uri_from_path_with_leading_slash() {
+        let temp_dir = TempDir::new().unwrap();
+        let temp_path = temp_dir.path().to_str().unwrap();
+
+        let config = StorageConfig::local().with_option("path", temp_path);
+        let provider = ObjectStoreProvider::new(config).await.unwrap();
+
+        let uri = provider.uri_from_path("/test/file.txt");
+        assert!(uri.starts_with("file://"));
+        assert!(uri.contains("test/file.txt"));
+    }
+
+    #[tokio::test]
+    async fn test_validate_connection_local_valid() {
+        let temp_dir = TempDir::new().unwrap();
+        let temp_path = temp_dir.path().to_str().unwrap();
+
+        // Create a subdirectory for validation
+        let sub_dir = temp_dir.path().join("subdir");
+        fs::create_dir(&sub_dir).unwrap();
+
+        let config = StorageConfig::local().with_option("path", temp_path);
+        let provider = ObjectStoreProvider::new(config).await.unwrap();
+
+        let result = provider.validate_connection("subdir").await;
+        assert!(result.is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_validate_connection_local_invalid() {
+        let temp_dir = TempDir::new().unwrap();
+        let temp_path = temp_dir.path().to_str().unwrap();
+
+        let config = StorageConfig::local().with_option("path", temp_path);
+        let provider = ObjectStoreProvider::new(config).await.unwrap();
+
+        let result = provider.validate_connection("nonexistent").await;
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_debug_implementation() {
+        let config = StorageConfig::local()
+            .with_option("path", "/tmp")
+            .with_option("timeout", "60");
+
+        let debug_str = format!("{:?}", config);
+        assert!(debug_str.contains("StorageConfig"));
+    }
+
+    #[tokio::test]
+    async fn test_read_file() {
+        let temp_dir = TempDir::new().unwrap();
+        let temp_path = temp_dir.path().to_str().unwrap();
+
+        // Create a test file
+        let file_path = temp_dir.path().join("test.txt");
+        let test_content = b"Hello, World!";
+        fs::write(&file_path, test_content).unwrap();
+
+        let config = StorageConfig::local().with_option("path", temp_path);
+        let provider = ObjectStoreProvider::new(config).await.unwrap();
+
+        let content = provider.read_file("test.txt").await.unwrap();
+        assert_eq!(content, test_content);
+    }
+
+    #[tokio::test]
+    async fn test_read_file_nonexistent() {
+        let temp_dir = TempDir::new().unwrap();
+        let temp_path = temp_dir.path().to_str().unwrap();
+
+        let config = StorageConfig::local().with_option("path", temp_path);
+        let provider = ObjectStoreProvider::new(config).await.unwrap();
+
+        let result = provider.read_file("nonexistent.txt").await;
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_exists_file() {
+        let temp_dir = TempDir::new().unwrap();
+        let temp_path = temp_dir.path().to_str().unwrap();
+
+        // Create a test file
+        let file_path = temp_dir.path().join("exists.txt");
+        fs::write(&file_path, "content").unwrap();
+
+        let config = StorageConfig::local().with_option("path", temp_path);
+        let provider = ObjectStoreProvider::new(config).await.unwrap();
+
+        let exists = provider.exists("exists.txt").await.unwrap();
+        assert!(exists);
+    }
+
+    #[tokio::test]
+    async fn test_exists_nonexistent() {
+        let temp_dir = TempDir::new().unwrap();
+        let temp_path = temp_dir.path().to_str().unwrap();
+
+        let config = StorageConfig::local().with_option("path", temp_path);
+        let provider = ObjectStoreProvider::new(config).await.unwrap();
+
+        let exists = provider.exists("nonexistent.txt").await.unwrap();
+        assert!(!exists);
+    }
+
+    #[tokio::test]
+    async fn test_get_metadata() {
+        let temp_dir = TempDir::new().unwrap();
+        let temp_path = temp_dir.path().to_str().unwrap();
+
+        // Create a test file
+        let file_path = temp_dir.path().join("metadata.txt");
+        let test_content = b"Test content for metadata";
+        fs::write(&file_path, test_content).unwrap();
+
+        let config = StorageConfig::local().with_option("path", temp_path);
+        let provider = ObjectStoreProvider::new(config).await.unwrap();
+
+        let metadata = provider.get_metadata("metadata.txt").await.unwrap();
+        assert_eq!(metadata.path, "metadata.txt");
+        assert_eq!(metadata.size, test_content.len() as u64);
+        assert!(metadata.last_modified.is_some());
+    }
+
+    #[tokio::test]
+    async fn test_list_files_non_recursive() {
+        let temp_dir = TempDir::new().unwrap();
+        let temp_path = temp_dir.path().to_str().unwrap();
+
+        // Create test files
+        fs::write(temp_dir.path().join("file1.txt"), "content1").unwrap();
+        fs::write(temp_dir.path().join("file2.txt"), "content2").unwrap();
+
+        // Create subdirectory with file (should not be listed in non-recursive mode)
+        let sub_dir = temp_dir.path().join("subdir");
+        fs::create_dir(&sub_dir).unwrap();
+        fs::write(sub_dir.join("file3.txt"), "content3").unwrap();
+
+        let config = StorageConfig::local().with_option("path", temp_path);
+        let provider = ObjectStoreProvider::new(config).await.unwrap();
+
+        let files = provider.list_files("", false).await.unwrap();
+
+        // Should only list files in root directory
+        assert_eq!(files.len(), 2);
+        let file_names: Vec<String> = files.iter().map(|f| f.path.clone()).collect();
+        assert!(file_names.iter().any(|name| name.contains("file1.txt")));
+        assert!(file_names.iter().any(|name| name.contains("file2.txt")));
+    }
+
+    #[tokio::test]
+    async fn test_list_files_recursive() {
+        let temp_dir = TempDir::new().unwrap();
+        let temp_path = temp_dir.path().to_str().unwrap();
+
+        // Create test files
+        fs::write(temp_dir.path().join("file1.txt"), "content1").unwrap();
+
+        // Create subdirectory with file
+        let sub_dir = temp_dir.path().join("subdir");
+        fs::create_dir(&sub_dir).unwrap();
+        fs::write(sub_dir.join("file2.txt"), "content2").unwrap();
+
+        let config = StorageConfig::local().with_option("path", temp_path);
+        let provider = ObjectStoreProvider::new(config).await.unwrap();
+
+        let files = provider.list_files("", true).await.unwrap();
+
+        // Should list all files recursively
+        assert!(files.len() >= 2);
+        let file_names: Vec<String> = files.iter().map(|f| f.path.clone()).collect();
+        assert!(file_names.iter().any(|name| name.contains("file1.txt")));
+        assert!(file_names.iter().any(|name| name.contains("file2.txt")));
+    }
+
+    #[tokio::test]
+    async fn test_discover_partitions() {
+        let temp_dir = TempDir::new().unwrap();
+        let temp_path = temp_dir.path().to_str().unwrap();
+
+        // Create partition directories
+        fs::create_dir(temp_dir.path().join("partition1")).unwrap();
+        fs::create_dir(temp_dir.path().join("partition2")).unwrap();
+        fs::create_dir(temp_dir.path().join("_metadata")).unwrap(); // Should be excluded
+
+        let config = StorageConfig::local().with_option("path", temp_path);
+        let provider = ObjectStoreProvider::new(config).await.unwrap();
+
+        let partitions = provider
+            .discover_partitions("", vec!["_metadata"])
+            .await
+            .unwrap();
+
+        // Should find partitions but exclude _metadata
+        assert!(partitions.len() >= 2);
+        assert!(partitions.iter().any(|p| p.contains("partition1")));
+        assert!(partitions.iter().any(|p| p.contains("partition2")));
+        assert!(!partitions.iter().any(|p| p.contains("_metadata")));
+    }
+
+    #[tokio::test]
+    async fn test_provider_debug_format() {
+        let temp_dir = TempDir::new().unwrap();
+        let temp_path = temp_dir.path().to_str().unwrap();
+
+        let config = StorageConfig::local().with_option("path", temp_path);
+        let provider = ObjectStoreProvider::new(config).await.unwrap();
+
+        let debug_str = format!("{:?}", provider);
+        assert!(debug_str.contains("StorageProvider"));
+        assert!(debug_str.contains("local"));
+    }
+}

@@ -231,3 +231,197 @@ impl Debug for dyn StorageProvider {
 pub(crate) fn string_to_path(s: &str) -> ObjectPath {
     ObjectPath::from(s)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use chrono::Utc;
+
+    #[test]
+    fn test_file_metadata_creation() {
+        let metadata = FileMetadata {
+            path: "/path/to/file.txt".to_string(),
+            size: 1024,
+            last_modified: None,
+        };
+
+        assert_eq!(metadata.path, "/path/to/file.txt");
+        assert_eq!(metadata.size, 1024);
+        assert!(metadata.last_modified.is_none());
+    }
+
+    #[test]
+    fn test_file_metadata_with_timestamp() {
+        let now = Utc::now();
+        let metadata = FileMetadata {
+            path: "/path/to/file.txt".to_string(),
+            size: 2048,
+            last_modified: Some(now),
+        };
+
+        assert_eq!(metadata.path, "/path/to/file.txt");
+        assert_eq!(metadata.size, 2048);
+        assert!(metadata.last_modified.is_some());
+        assert_eq!(metadata.last_modified.unwrap(), now);
+    }
+
+    #[test]
+    fn test_file_metadata_clone() {
+        let metadata1 = FileMetadata {
+            path: "/path/to/file.txt".to_string(),
+            size: 512,
+            last_modified: None,
+        };
+
+        let metadata2 = metadata1.clone();
+        assert_eq!(metadata1.path, metadata2.path);
+        assert_eq!(metadata1.size, metadata2.size);
+        assert_eq!(metadata1.last_modified, metadata2.last_modified);
+    }
+
+    #[test]
+    fn test_file_metadata_debug() {
+        let metadata = FileMetadata {
+            path: "/test/file.txt".to_string(),
+            size: 100,
+            last_modified: None,
+        };
+
+        let debug_str = format!("{:?}", metadata);
+        assert!(debug_str.contains("FileMetadata"));
+        assert!(debug_str.contains("/test/file.txt"));
+        assert!(debug_str.contains("100"));
+    }
+
+    #[test]
+    fn test_string_to_path() {
+        let path_str = "path/to/file.txt";
+        let object_path = string_to_path(path_str);
+
+        // Verify it creates a valid ObjectPath
+        assert_eq!(object_path.as_ref(), path_str);
+    }
+
+    #[test]
+    fn test_string_to_path_empty() {
+        let path_str = "";
+        let object_path = string_to_path(path_str);
+        assert_eq!(object_path.as_ref(), "");
+    }
+
+    #[test]
+    fn test_string_to_path_with_slashes() {
+        let path_str = "a/b/c/d/file.parquet";
+        let object_path = string_to_path(path_str);
+        assert_eq!(object_path.as_ref(), path_str);
+    }
+
+    #[test]
+    fn test_file_metadata_large_size() {
+        let metadata = FileMetadata {
+            path: "/large/file.dat".to_string(),
+            size: u64::MAX,
+            last_modified: None,
+        };
+
+        assert_eq!(metadata.size, u64::MAX);
+    }
+
+    #[test]
+    fn test_file_metadata_zero_size() {
+        let metadata = FileMetadata {
+            path: "/empty/file.txt".to_string(),
+            size: 0,
+            last_modified: None,
+        };
+
+        assert_eq!(metadata.size, 0);
+    }
+
+    #[test]
+    fn test_storage_provider_debug() {
+        // Create a mock storage provider to test the Debug trait
+        use std::sync::OnceLock;
+
+        struct MockProvider {
+            options: OnceLock<HashMap<String, String>>,
+        }
+
+        impl MockProvider {
+            fn new() -> Self {
+                Self {
+                    options: OnceLock::new(),
+                }
+            }
+        }
+
+        #[async_trait]
+        impl StorageProvider for MockProvider {
+            fn base_path(&self) -> &str {
+                "/mock/base/path"
+            }
+
+            async fn validate_connection(&self, _path: &str) -> StorageResult<()> {
+                Ok(())
+            }
+
+            async fn list_files(
+                &self,
+                _path: &str,
+                _recursive: bool,
+            ) -> StorageResult<Vec<FileMetadata>> {
+                Ok(vec![])
+            }
+
+            async fn discover_partitions(
+                &self,
+                _path: &str,
+                _exclude_prefixes: Vec<&str>,
+            ) -> StorageResult<Vec<String>> {
+                Ok(vec![])
+            }
+
+            async fn list_files_parallel(
+                &self,
+                _path: &str,
+                _partitions: Vec<String>,
+                _parallelism: usize,
+            ) -> StorageResult<Vec<FileMetadata>> {
+                Ok(vec![])
+            }
+
+            async fn read_file(&self, _path: &str) -> StorageResult<Vec<u8>> {
+                Ok(vec![])
+            }
+
+            async fn exists(&self, _path: &str) -> StorageResult<bool> {
+                Ok(true)
+            }
+
+            async fn get_metadata(&self, _path: &str) -> StorageResult<FileMetadata> {
+                Ok(FileMetadata {
+                    path: "test".to_string(),
+                    size: 0,
+                    last_modified: None,
+                })
+            }
+
+            fn options(&self) -> &HashMap<String, String> {
+                self.options.get_or_init(|| HashMap::new())
+            }
+
+            fn clean_options(&self) -> HashMap<String, String> {
+                HashMap::new()
+            }
+
+            fn uri_from_path(&self, path: &str) -> String {
+                path.to_string()
+            }
+        }
+
+        let provider: &dyn StorageProvider = &MockProvider::new();
+        let debug_str = format!("{:?}", provider);
+        assert!(debug_str.contains("StorageProvider"));
+        assert!(debug_str.contains("/mock/base/path"));
+    }
+}

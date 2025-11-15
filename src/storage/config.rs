@@ -260,3 +260,237 @@ impl From<StorageConfig> for String {
         config.storage_type_str().to_string()
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_storage_type_serialization() {
+        // Test that StorageType serializes correctly
+        let local = StorageType::Local;
+        let aws = StorageType::Aws;
+        let azure = StorageType::Azure;
+        let gcs = StorageType::Gcs;
+
+        assert_eq!(serde_json::to_string(&local).unwrap(), "\"local\"");
+        assert_eq!(serde_json::to_string(&aws).unwrap(), "\"aws\"");
+        assert_eq!(serde_json::to_string(&azure).unwrap(), "\"azure\"");
+        assert_eq!(serde_json::to_string(&gcs).unwrap(), "\"gcs\"");
+    }
+
+    #[test]
+    fn test_storage_type_deserialization() {
+        // Test that StorageType deserializes correctly
+        let local: StorageType = serde_json::from_str("\"local\"").unwrap();
+        let aws: StorageType = serde_json::from_str("\"aws\"").unwrap();
+        let azure: StorageType = serde_json::from_str("\"azure\"").unwrap();
+        let gcs: StorageType = serde_json::from_str("\"gcs\"").unwrap();
+
+        assert_eq!(local, StorageType::Local);
+        assert_eq!(aws, StorageType::Aws);
+        assert_eq!(azure, StorageType::Azure);
+        assert_eq!(gcs, StorageType::Gcs);
+    }
+
+    #[test]
+    fn test_storage_config_new_local() {
+        let config = StorageConfig::new("local");
+        assert_eq!(config.storage_type, StorageType::Local);
+        assert!(!config.options.is_empty());
+        assert_eq!(config.storage_type_str(), "local");
+    }
+
+    #[test]
+    fn test_storage_config_new_aws() {
+        let config1 = StorageConfig::new("aws");
+        let config2 = StorageConfig::new("s3");
+        let config3 = StorageConfig::new("AWS");
+
+        assert_eq!(config1.storage_type, StorageType::Aws);
+        assert_eq!(config2.storage_type, StorageType::Aws);
+        assert_eq!(config3.storage_type, StorageType::Aws);
+        assert_eq!(config1.storage_type_str(), "aws");
+    }
+
+    #[test]
+    fn test_storage_config_new_azure() {
+        let config = StorageConfig::new("azure");
+        assert_eq!(config.storage_type, StorageType::Azure);
+        assert_eq!(config.storage_type_str(), "azure");
+    }
+
+    #[test]
+    fn test_storage_config_new_gcs() {
+        let config1 = StorageConfig::new("gcs");
+        let config2 = StorageConfig::new("gcp");
+
+        assert_eq!(config1.storage_type, StorageType::Gcs);
+        assert_eq!(config2.storage_type, StorageType::Gcs);
+        assert_eq!(config1.storage_type_str(), "gcs");
+    }
+
+    #[test]
+    #[should_panic(expected = "Unknown storage type")]
+    fn test_storage_config_new_invalid() {
+        StorageConfig::new("invalid");
+    }
+
+    #[test]
+    fn test_storage_config_local() {
+        let config = StorageConfig::local();
+        assert_eq!(config.storage_type, StorageType::Local);
+        assert!(!config.options.is_empty());
+    }
+
+    #[test]
+    fn test_storage_config_aws() {
+        let config = StorageConfig::aws();
+        assert_eq!(config.storage_type, StorageType::Aws);
+        assert!(!config.options.is_empty());
+    }
+
+    #[test]
+    fn test_storage_config_azure() {
+        let config = StorageConfig::azure();
+        assert_eq!(config.storage_type, StorageType::Azure);
+        assert!(!config.options.is_empty());
+    }
+
+    #[test]
+    fn test_storage_config_gcs() {
+        let config = StorageConfig::gcs();
+        assert_eq!(config.storage_type, StorageType::Gcs);
+        // GCS has empty options by default
+        assert!(config.options.is_empty());
+    }
+
+    #[test]
+    fn test_default_options() {
+        let options = StorageConfig::default_options();
+        assert_eq!(options.get("timeout"), Some(&"1200".to_string()));
+        assert_eq!(options.get("connect_timeout"), Some(&"30".to_string()));
+        assert_eq!(options.get("max_retries"), Some(&"20".to_string()));
+        assert_eq!(options.get("retry_timeout"), Some(&"1200".to_string()));
+        assert_eq!(options.get("pool_idle_timeout"), Some(&"15".to_string()));
+        assert_eq!(
+            options.get("pool_max_idle_per_host"),
+            Some(&"5".to_string())
+        );
+    }
+
+    #[test]
+    fn test_with_option() {
+        let config = StorageConfig::local()
+            .with_option("path", "/tmp/data")
+            .with_option("custom_key", "custom_value");
+
+        assert_eq!(config.get_option("path"), Some(&"/tmp/data".to_string()));
+        assert_eq!(
+            config.get_option("custom_key"),
+            Some(&"custom_value".to_string())
+        );
+    }
+
+    #[test]
+    fn test_with_options() {
+        let mut custom_options = HashMap::new();
+        custom_options.insert("bucket".to_string(), "my-bucket".to_string());
+        custom_options.insert("region".to_string(), "us-east-1".to_string());
+
+        let config = StorageConfig::aws().with_options(custom_options);
+
+        assert_eq!(config.get_option("bucket"), Some(&"my-bucket".to_string()));
+        assert_eq!(config.get_option("region"), Some(&"us-east-1".to_string()));
+        // Default options should still be present
+        assert_eq!(config.get_option("timeout"), Some(&"1200".to_string()));
+    }
+
+    #[test]
+    fn test_get_option() {
+        let config = StorageConfig::local().with_option("path", "/tmp/data");
+
+        assert_eq!(config.get_option("path"), Some(&"/tmp/data".to_string()));
+        assert_eq!(config.get_option("nonexistent"), None);
+    }
+
+    #[test]
+    fn test_storage_type_str() {
+        assert_eq!(StorageConfig::local().storage_type_str(), "local");
+        assert_eq!(StorageConfig::aws().storage_type_str(), "aws");
+        assert_eq!(StorageConfig::azure().storage_type_str(), "azure");
+        assert_eq!(StorageConfig::gcs().storage_type_str(), "gcs");
+    }
+
+    #[test]
+    fn test_from_storage_config_to_string() {
+        let local_str: String = StorageConfig::local().into();
+        let aws_str: String = StorageConfig::aws().into();
+        let azure_str: String = StorageConfig::azure().into();
+        let gcs_str: String = StorageConfig::gcs().into();
+
+        assert_eq!(local_str, "local");
+        assert_eq!(aws_str, "aws");
+        assert_eq!(azure_str, "azure");
+        assert_eq!(gcs_str, "gcs");
+    }
+
+    #[test]
+    fn test_method_chaining() {
+        let config = StorageConfig::aws()
+            .with_option("bucket", "my-bucket")
+            .with_option("region", "us-west-2")
+            .with_option("access_key_id", "AKIAIOSFODNN7EXAMPLE");
+
+        assert_eq!(config.storage_type, StorageType::Aws);
+        assert_eq!(config.get_option("bucket"), Some(&"my-bucket".to_string()));
+        assert_eq!(config.get_option("region"), Some(&"us-west-2".to_string()));
+        assert_eq!(
+            config.get_option("access_key_id"),
+            Some(&"AKIAIOSFODNN7EXAMPLE".to_string())
+        );
+    }
+
+    #[test]
+    fn test_config_serialization() {
+        let config = StorageConfig::aws()
+            .with_option("bucket", "test-bucket")
+            .with_option("region", "us-east-1");
+
+        let json = serde_json::to_string(&config).unwrap();
+        assert!(json.contains("\"type\":\"aws\""));
+        assert!(json.contains("\"bucket\""));
+        assert!(json.contains("\"region\""));
+    }
+
+    #[test]
+    fn test_config_deserialization() {
+        let json = r#"{"type":"aws","options":{"bucket":"test-bucket","region":"us-east-1"}}"#;
+        let config: StorageConfig = serde_json::from_str(json).unwrap();
+
+        assert_eq!(config.storage_type, StorageType::Aws);
+        assert_eq!(
+            config.get_option("bucket"),
+            Some(&"test-bucket".to_string())
+        );
+        assert_eq!(config.get_option("region"), Some(&"us-east-1".to_string()));
+    }
+
+    #[test]
+    fn test_option_override() {
+        let config = StorageConfig::local()
+            .with_option("timeout", "600")
+            .with_option("timeout", "900"); // Override previous value
+
+        assert_eq!(config.get_option("timeout"), Some(&"900".to_string()));
+    }
+
+    #[test]
+    fn test_clone() {
+        let config1 = StorageConfig::aws().with_option("bucket", "my-bucket");
+        let config2 = config1.clone();
+
+        assert_eq!(config1.storage_type, config2.storage_type);
+        assert_eq!(config1.get_option("bucket"), config2.get_option("bucket"));
+    }
+}
