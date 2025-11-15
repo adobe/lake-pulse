@@ -6,7 +6,12 @@ use crate::analyze::table_analyzer::TableAnalyzer;
 use crate::storage::{FileMetadata, StorageProvider};
 use crate::util::util::is_ndjson;
 use async_trait::async_trait;
+use bytes::Bytes;
+use chrono::Utc;
 use futures::stream::{self, StreamExt};
+use parquet::file::reader::{FileReader, SerializedFileReader};
+use parquet::record::Field;
+use parquet::schema::types::Type;
 use serde_json::Value;
 use std::collections::HashSet;
 use std::error::Error;
@@ -175,12 +180,12 @@ impl DeltaAnalyzer {
         let mut metadata_files = Vec::new();
 
         for obj in objects {
-            if obj.path.ends_with(".parquet") {
-                data_files.push(obj);
-            } else if obj.path.contains("_delta_log/") && obj.path.ends_with(".json") {
-                // TODO: Should it contain the checkpoint parquet files that resides in delta_log?
-                // TODO: Should we consider `_change_data` files as metadata?
+            if obj.path.contains("_delta_log/")
+                && (obj.path.ends_with(".json") || obj.path.ends_with(".checkpoint.parquet"))
+            {
                 metadata_files.push(obj);
+            } else if obj.path.ends_with(".parquet") {
+                data_files.push(obj);
             }
         }
 
@@ -226,7 +231,14 @@ impl DeltaAnalyzer {
         metadata_files: &Vec<FileMetadata>,
     ) -> Result<Vec<String>, Box<dyn Error + Send + Sync>> {
         let storage_provider = Arc::clone(&self.storage_provider);
-        let metadata_files_owned = metadata_files.clone();
+        // TODO: For now, let's check only JSON files.
+        //       In the future, we should also check checkpoints.
+        let metadata_files_owned = metadata_files
+            .clone()
+            .iter()
+            .filter(|f| f.path.contains(".json"))
+            .cloned()
+            .collect::<Vec<_>>();
 
         let results: Vec<Result<Vec<String>, Box<dyn Error + Send + Sync>>> =
             stream::iter(metadata_files_owned)
@@ -274,8 +286,8 @@ impl DeltaAnalyzer {
                         let extract_refs_start = SystemTime::now();
                         let mut file_refs = Vec::new();
                         for entry in json {
-                            if let Some(add_actions) = entry.get("add") {
-                                if let Some(obj) = add_actions.as_object() {
+                            if let Some(matching_actions) = entry.get("add").or(entry.get("cdc")) {
+                                if let Some(obj) = matching_actions.as_object() {
                                     if let Some(path) = obj.get("path") {
                                         if let Some(path_str) = path.as_str() {
                                             file_refs.push(path_str.to_string());
@@ -336,11 +348,19 @@ impl DeltaAnalyzer {
         file_path: &str,
         file_index: usize,
     ) -> Result<MetadataProcessingResult, Box<dyn Error + Send + Sync>> {
+        // If the given file is a checkpoint (ie: `*.checkpoint.parquet`),
+        // extract the schema from the checkpoint's `metaData.schemaString` column.
+        if file_path.ends_with(".checkpoint.parquet") {
+            return self
+                .process_checkpoint_metadata(file_path, file_index)
+                .await;
+        }
+
         let content = self.storage_provider.read_file(file_path).await?;
         let content_str = String::from_utf8_lossy(&content);
 
         let mut result = MetadataProcessingResult {
-            oldest_timestamp: chrono::Utc::now().timestamp() as u64,
+            oldest_timestamp: Utc::now().timestamp() as u64,
             ..Default::default()
         };
 
@@ -435,6 +455,142 @@ impl DeltaAnalyzer {
         Ok(result)
     }
 
+    /// Process checkpoint metadata to extract schema changes and constraints.
+    ///
+    /// This function reads a Delta Lake checkpoint Parquet file and extracts metadata
+    /// information, specifically focusing on schema changes and constraint definitions.
+    /// It uses schema projection to efficiently read only the `metaData` column,
+    /// avoiding the overhead of decoding all checkpoint actions for large checkpoints.
+    ///
+    /// # Arguments
+    ///
+    /// * `file_path` - Path to the checkpoint Parquet file to process
+    /// * `file_index` - Index of the file, used as the version number for schema changes
+    ///
+    /// # Returns
+    ///
+    /// Returns a `MetadataProcessingResult` containing:
+    /// * Schema changes detected in the checkpoint with version and timestamp
+    /// * Constraint counts (total, check, not null, unique, foreign key)
+    /// * Oldest timestamp initialized to current time (updated by caller if needed)
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if:
+    /// * The file cannot be read from storage
+    /// * The Parquet file is malformed or cannot be parsed
+    /// * The `metaData` column is not found in the checkpoint schema
+    /// * Row iteration or field extraction fails
+    ///
+    /// # Implementation Details
+    ///
+    /// The function performs the following steps:
+    /// 1. Reads the checkpoint file from storage
+    /// 2. Creates a schema projection containing only the `metaData` column
+    /// 3. Iterates through rows looking for non-null `metaData` fields
+    /// 4. Extracts `schemaString` and `createdTime` from metadata
+    /// 5. Parses schema JSON and extracts constraints
+    /// 6. Detects breaking schema changes by comparing with previous schemas
+    /// 7. Accumulates all schema changes and constraint counts in the result
+    async fn process_checkpoint_metadata(
+        &self,
+        file_path: &str,
+        file_index: usize,
+    ) -> Result<MetadataProcessingResult, Box<dyn Error + Send + Sync>> {
+        let content = self.storage_provider.read_file(file_path).await?;
+        let reader = SerializedFileReader::new(Bytes::copy_from_slice(content.as_slice()))
+            .map_err(|e| Box::new(e) as Box<dyn Error + Send + Sync>)?;
+
+        let mut result = MetadataProcessingResult {
+            oldest_timestamp: Utc::now().timestamp() as u64,
+            ..Default::default()
+        };
+
+        // Project only the `metaData` column to avoid decoding all other
+        // checkpoint actions (add/remove, etc.) for large checkpoints.
+        let file_schema = reader.metadata().file_metadata().schema();
+        let schema_name = file_schema.name();
+        let fields = file_schema.get_fields();
+
+        let selected_fields: Vec<_> = fields
+            .iter()
+            .cloned()
+            .filter(|f| f.name() == "metaData")
+            .collect();
+
+        if selected_fields.is_empty() {
+            let err: Box<dyn Error + Send + Sync> =
+                "metaData column not found in checkpoint schema".into();
+            return Err(err);
+        }
+
+        let schema_projection = Type::group_type_builder(schema_name)
+            .with_fields(selected_fields)
+            .build()
+            .map_err(|e| Box::new(e) as Box<dyn Error + Send + Sync>)?;
+
+        let row_iter = reader.get_row_iter(Some(schema_projection)).map_err(|e| {
+            info!("error={:?}", e);
+            Box::new(e) as Box<dyn Error + Send + Sync>
+        })?;
+
+        let version = file_index as u64;
+
+        for row in row_iter {
+            let row = row.map_err(|e| Box::new(e) as Box<dyn Error + Send + Sync>)?;
+
+            // The checkpoint encodes actions as rows with a top-level column indicating the
+            // action type. We are interested in rows where the `metaData` column is present
+            // and non-null.
+            if let Some((_, field)) = row.get_column_iter().next() {
+                if let Field::Group(meta_group) = field {
+                    let mut schema: Option<Value> = None;
+                    let mut timestamp: u64 = 0;
+
+                    for (meta_name, meta_field) in meta_group.get_column_iter() {
+                        match (meta_name.as_str(), meta_field) {
+                            ("schemaString", Field::Str(s)) => {
+                                if let Ok(parsed) = serde_json::from_str::<Value>(s) {
+                                    schema = Some(parsed);
+                                }
+                            }
+                            ("createdTime", Field::Long(v)) => {
+                                if *v > 0 {
+                                    timestamp = *v as u64;
+                                }
+                            }
+                            ("createdTime", Field::Int(v)) => {
+                                if *v > 0 {
+                                    timestamp = *v as u64;
+                                }
+                            }
+                            _ => {}
+                        }
+                    }
+
+                    if let Some(schema) = schema {
+                        let constraints = self.extract_constraints_from_schema(&schema);
+                        result.total_constraints += constraints.0;
+                        result.check_constraints += constraints.1;
+                        result.not_null_constraints += constraints.2;
+                        result.unique_constraints += constraints.3;
+                        result.foreign_key_constraints += constraints.4;
+
+                        let is_breaking = self.is_breaking_change(&result.schema_changes, &schema);
+
+                        result.schema_changes.push(SchemaChange {
+                            version,
+                            timestamp,
+                            schema,
+                            is_breaking,
+                        });
+                    }
+                }
+            }
+        }
+        Ok(result)
+    }
+
     /// Extract deletion vector metrics from a Delta log entry.
     ///
     /// Analyzes "remove" actions in the transaction log to identify deletion vectors,
@@ -482,7 +638,10 @@ impl DeltaAnalyzer {
     /// * `entry` - The Delta log entry to process
     /// * `result` - The result object to update (mutated in place)
     fn extract_snapshot_metrics(&self, entry: &Value, result: &mut MetadataProcessingResult) {
-        if let Some(timestamp) = entry.get("timestamp") {
+        if let Some(timestamp) = entry.get("timestamp").or(entry
+            .get("commitInfo")
+            .map(|c| c.get("timestamp").unwrap_or(&Value::Null)))
+        {
             let ts = timestamp.as_u64().unwrap_or(0);
             if ts > 0 {
                 result.total_snapshots += 1;
@@ -517,7 +676,6 @@ impl DeltaAnalyzer {
                 if let Ok(schema) =
                     serde_json::from_str::<Value>(schema_string.as_str().unwrap_or(""))
                 {
-                    // TODO: Should it be beautified?
                     let constraints = self.extract_constraints_from_schema(&schema);
                     result.total_constraints += constraints.0;
                     result.check_constraints += constraints.1;
@@ -587,6 +745,8 @@ impl DeltaAnalyzer {
     ) -> Result<(), Box<dyn Error + Send + Sync>> {
         let parallelism = self.parallelism.max(1);
 
+        // TODO: `metadata_files` contains checkpoints too.
+        //       Should get the last checkpoint and extract the schema from there
         let min_file_name = metadata_files
             .iter()
             .min_by_key(|f| f.path.clone())
@@ -815,6 +975,7 @@ impl DeltaAnalyzer {
             avg_cluster_size_bytes,
         });
 
+        // TODO: Why is this all zeros?
         metrics.file_compaction = Some(FileCompactionMetrics {
             compaction_opportunity_score: 0.0,
             small_files_count: 0,
@@ -966,6 +1127,7 @@ impl DeltaAnalyzer {
             return false;
         }
 
+        // TODO: Get rid of `unwrap` here -----------------v
         let last_schema = &previous_changes.last().unwrap().schema;
 
         // Check for breaking changes:

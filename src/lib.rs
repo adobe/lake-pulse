@@ -94,6 +94,6 @@ pub mod storage;
 pub mod util;
 
 // Re-export commonly used types
+pub use analyze::metrics::{HealthMetrics, HealthReport};
 pub use analyze::Analyzer;
-pub use analyze::metrics::{HealthReport, HealthMetrics};
 pub use storage::StorageConfig;

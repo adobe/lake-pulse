@@ -384,7 +384,7 @@ impl Analyzer {
             || {
                 data_files
                     .iter()
-                    .filter(|f| !referenced_set.contains(&f.path))
+                    .filter(|f| !referenced_set.iter().any(|i| f.path.contains(i)))
                     .map(|f| FileInfo {
                         path: format!("{}/{}", self.storage_provider.base_path(), f.path),
                         size_bytes: f.size as u64,
@@ -410,6 +410,8 @@ impl Analyzer {
             || self.analyze_partitioning(&data_files),
             Some(|c: &Vec<PartitionInfo>| format!("Analyzed partitions count={}", c.len())),
         )?;
+
+        metrics.partition_count = metrics.partitions.len();
 
         let data_files_total_size: u64 = data_files.iter().map(|f| f.size).sum();
 

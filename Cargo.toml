@@ -9,7 +9,7 @@ rust-version = "1.88"
 keywords = ["lake", "pulse", "analyze"]
 authors = ["Andrei Ionescu <aionescu@adobe.com>"]
 repository = "https://github.com/aionescu_adobe/lake-pulse"
-exclude = [ "examples/data/**/*" ]
+exclude = [ "examples/data/**/*", "examples/dont_commit_*" ]
 
 [dependencies]
 tokio = { version = "1", features = ["full"] }
@@ -35,6 +35,8 @@ bytes = "1.0"
 chrono = "0.4"
 log = "0.4.28"
 regex = "1.12.2"
+parquet = "56.2"
+
 
 
 
