@@ -4,11 +4,6 @@
 ![License](./badges/license.svg)
 ![Rust Version](./badges/rust-version.svg)
 
-![Delta Lake](./badges/delta-lake.svg)
-![Apache Iceberg](./badges/apache-iceberg.svg)
-![Apache Hudi](./badges/apache-hudi.svg)
-![Lance](./badges/lance.svg)
-
 ```
     __          __           ____        __
    / /   ____ _/ /_____     / __ \__  __/ /_______
@@ -18,6 +13,13 @@
 
 ```
 A Rust library for analyzing data lake table health across multiple formats (Delta Lake, Apache Iceberg, Apache Hudi, Lance) and storage providers (AWS S3, Azure Data Lake, GCS, Local).
+
+## Supported Formats
+
+![Delta Lake](./badges/delta-lake.svg)
+![Apache Iceberg](./badges/apache-iceberg.svg)
+![Apache Hudi](./badges/apache-hudi.svg)
+![Lance](./badges/lance.svg)
 
 ## Overview
 
