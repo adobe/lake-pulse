@@ -550,7 +550,7 @@ impl Display for HealthReport {
 
         writeln!(
             f,
-            " {:<19} {:>8}              {:<19} {:>8}",
+            " {:<19} {:>8}              {:<12} {:>15}",
             "Avg Partition Size",
             if skew.avg_partition_size > 0 {
                 format!("{:.2} MB", avg_partition_mb)
@@ -562,7 +562,7 @@ impl Display for HealthReport {
         )?;
         writeln!(
             f,
-            " {:<19} {:>8}              {:<19} {:>8}",
+            " {:<19} {:>8}              {:<12} {:>15}",
             "", "", "Last File", last_file_display
         )?;
 
@@ -663,13 +663,9 @@ impl Display for HealthReport {
             writeln!(
                 f,
                 " {:<41} {}",
-                if has_clustering {
-                    "Clustering (Iceberg)"
-                } else {
-                    ""
-                },
+                if has_clustering { "Clustering" } else { "" },
                 if has_deletion_vectors {
-                    "Deletion Vectors (Delta)"
+                    "Deletion Vectors"
                 } else {
                     ""
                 }
@@ -737,7 +733,7 @@ impl Display for HealthReport {
                             "Vectors",
                             format!("{}", dv_metrics.deletion_vector_count)
                         ),
-                        1 => format!(" {:<20} {:>8}", "DV Size", dv_size_str),
+                        1 => format!(" {:<19} {:>8}", "DV Size", dv_size_str),
                         2 => format!(
                             " {:<19} {:>8}",
                             "Deleted Rows",
@@ -760,7 +756,7 @@ impl Display for HealthReport {
                 };
 
                 if has_clustering && has_deletion_vectors {
-                    writeln!(f, "{}              {}", left, right)?;
+                    writeln!(f, "{}             {}", left, right)?;
                 } else if has_clustering {
                     writeln!(f, "{}", left)?;
                 } else {
@@ -850,28 +846,28 @@ impl Display for HealthReport {
                         ),
                         1 => format!(
                             " {:<19} {:>8}",
-                            "Oldest",
-                            format!("{:.1} days", tt_metrics.oldest_snapshot_age_days)
+                            "Oldest (days)",
+                            format!("{:.1}", tt_metrics.oldest_snapshot_age_days)
                         ),
                         2 => format!(
                             " {:<19} {:>8}",
-                            "Newest",
-                            format!("{:.1} days", tt_metrics.newest_snapshot_age_days)
+                            "Newest (days)",
+                            format!("{:.1}", tt_metrics.newest_snapshot_age_days)
                         ),
-                        3 => format!(" {:<20} {:>7}", "Historical Size", historical_str),
+                        3 => format!(" {:<19} {:>8}", "Historical Size", historical_str),
                         4 => format!(
                             " {:<19} {:>8}",
-                            "Cost Impact",
-                            format!("{:.2} (0-1)", tt_metrics.storage_cost_impact_score)
+                            "Cost Impact (0-1)",
+                            format!("{:.2}", tt_metrics.storage_cost_impact_score)
                         ),
                         5 => format!(
                             " {:<19} {:>8}",
-                            "Retention Eff",
-                            format!("{:.2} (0-1)", tt_metrics.retention_efficiency_score)
+                            "Reten Eff (0-1)",
+                            format!("{:.2}", tt_metrics.retention_efficiency_score)
                         ),
                         6 => format!(
                             " {:<19} {:>8}",
-                            "Recommended",
+                            "Recommended (days)",
                             format!("{} days", tt_metrics.recommended_retention_days)
                         ),
                         _ => format!("{:<40}", ""),
@@ -881,7 +877,7 @@ impl Display for HealthReport {
                 };
 
                 if has_schema && has_time_travel {
-                    writeln!(f, "{}              {}", left, right)?;
+                    writeln!(f, "{}             {}", left, right)?;
                 } else if has_schema {
                     writeln!(f, "{}", left)?;
                 } else {
@@ -918,42 +914,42 @@ impl Display for HealthReport {
                 let left = if let Some(ref constraint_metrics) = report.metrics.table_constraints {
                     match i {
                         0 => format!(
-                            " {:<20} {:>6}",
+                            " {:<19} {:>8}",
                             "Total",
                             format!("{}", constraint_metrics.total_constraints)
                         ),
                         1 => format!(
-                            " {:<20} {:>6}",
+                            " {:<19} {:>8}",
                             "Check",
                             format!("{}", constraint_metrics.check_constraints)
                         ),
                         2 => format!(
-                            " {:<20} {:>6}",
+                            " {:<19} {:>8}",
                             "NOT NULL",
                             format!("{}", constraint_metrics.not_null_constraints)
                         ),
                         3 => format!(
-                            " {:<20} {:>6}",
+                            " {:<19} {:>8}",
                             "Unique",
                             format!("{}", constraint_metrics.unique_constraints)
                         ),
                         4 => format!(
-                            " {:<20} {:>6}",
+                            " {:<19} {:>8}",
                             "Foreign Key",
                             format!("{}", constraint_metrics.foreign_key_constraints)
                         ),
                         5 => format!(
-                            " {:<20} {:>6}",
+                            " {:<20} {:>7}",
                             "Violation Risk (0-1)",
                             format!("{:.2}", constraint_metrics.constraint_violation_risk)
                         ),
                         6 => format!(
-                            " {:<20} {:>6}",
+                            " {:<19} {:>8}",
                             "Quality Score (0-1)",
                             format!("{:.2}", constraint_metrics.data_quality_score)
                         ),
                         7 => format!(
-                            " {:<20} {:>6}",
+                            " {:<19} {:>8}",
                             "Coverage (0-1)",
                             format!("{:.2}", constraint_metrics.constraint_coverage_score)
                         ),
@@ -996,8 +992,8 @@ impl Display for HealthReport {
                         ),
                         3 => format!(
                             " {:<19} {:>8}",
-                            "Potential",
-                            format!("{} files", compaction_metrics.potential_compaction_files)
+                            "Potential Files",
+                            format!("{}", compaction_metrics.potential_compaction_files)
                         ),
                         4 => format!(" {:<19} {:>8}", "Savings", savings_str),
                         5 => format!(
@@ -1045,7 +1041,7 @@ impl Display for HealthReport {
                 }
 
                 if has_constraints && has_compaction {
-                    writeln!(f, "{}              {}", left, right)?;
+                    writeln!(f, "{}             {}", left, right)?;
                 } else if has_constraints {
                     writeln!(f, "{}", left)?;
                 } else {
@@ -1129,20 +1125,23 @@ impl Display for HealthReport {
                 )?;
             }
             let tbl_props = delta_metrics.table_properties.clone();
-            writeln!(
-                f,
-                " {:<40} {:>32}",
-                "Table Properties",
-                if !tbl_props.is_empty() {
-                    tbl_props
-                        .iter()
-                        .map(|(k, v)| format!("{}: {}", k, v))
-                        .collect::<Vec<String>>()
-                        .join(", ")
-                } else {
-                    "None".to_string()
-                }
-            )?;
+            if !tbl_props.is_empty() {
+                tbl_props.iter().enumerate().try_for_each(|(i, (k, v))| {
+                    if i == 0 {
+                        writeln!(
+                            f,
+                            " {:<20} {:>52}",
+                            "Table Properties",
+                            format!("{}: {}", k, v)
+                        )
+                    } else {
+                        writeln!(f, " {:<20} {:>52}", "", format!("{}: {}", k, v))
+                    }
+                })?;
+            } else {
+                writeln!(f, " {:<20} {:>52}", "Table Properties", "None")?
+            }
+
             // File Statistics - formatted nicely
             let file_stats = &delta_metrics.file_stats;
             let total_size_mb = file_stats.total_size_bytes as f64 / (1024.0 * 1024.0);

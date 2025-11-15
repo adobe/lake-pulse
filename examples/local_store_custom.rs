@@ -11,7 +11,11 @@ async fn main() {
         .init();
 
     let storage_config = StorageConfig::local().with_option("path", "./examples/data");
-    let analyzer = Analyzer::builder(storage_config).build().await.unwrap();
+    let analyzer = Analyzer::builder(storage_config)
+        .with_parallelism(5)
+        .build()
+        .await
+        .unwrap();
 
     // Generate report
     let report = analyzer.analyze("delta_dataset").await.unwrap();
