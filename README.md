@@ -1,11 +1,20 @@
 # Lake Pulse <img src=./rustacean-flat-happy.svg style="width:    40px" />
 
+![Code Coverage](./badges/coverage.svg)
+![License](./badges/license.svg)
+![Rust Version](./badges/rust-version.svg)
+
+![Delta Lake](./badges/delta-lake.svg)
+![Apache Iceberg](./badges/apache-iceberg.svg)
+![Apache Hudi](./badges/apache-hudi.svg)
+![Lance](./badges/lance.svg)
+
 ```
-    __          __           ____        __        
-   / /   ____ _/ /_____     / __ \__  __/ /_______ 
+    __          __           ____        __
+   / /   ____ _/ /_____     / __ \__  __/ /_______
   / /   / __ `/ //_/ _ \   / /_/ / / / / / ___/ _ \
  / /___/ /_/ / ,< /  __/  / ____/ /_/ / (__  )  __/
-/_____/\__,_/_/|_|\___/  /_/    \__,_/_/____/\___/ 
+/_____/\__,_/_/|_|\___/  /_/    \__,_/_/____/\___/
 
 ```
 A Rust library for analyzing data lake table health across multiple formats (Delta Lake, Apache Iceberg, Apache Hudi, Lance) and storage providers (AWS S3, Azure Data Lake, GCS, Local).
