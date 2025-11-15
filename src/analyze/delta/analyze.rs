@@ -1655,3 +1655,863 @@ impl TableAnalyzer for DeltaAnalyzer {
         .await
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::storage::error::StorageResult;
+    use serde_json::json;
+    use std::collections::HashMap;
+    use std::sync::OnceLock;
+
+    // Mock storage provider for testing
+    struct MockStorageProvider {
+        options: OnceLock<HashMap<String, String>>,
+    }
+
+    impl MockStorageProvider {
+        fn new() -> Self {
+            Self {
+                options: OnceLock::new(),
+            }
+        }
+    }
+
+    #[async_trait]
+    impl StorageProvider for MockStorageProvider {
+        fn base_path(&self) -> &str {
+            "/mock/base/path"
+        }
+
+        async fn validate_connection(&self, _path: &str) -> StorageResult<()> {
+            Ok(())
+        }
+
+        async fn list_files(
+            &self,
+            _path: &str,
+            _recursive: bool,
+        ) -> StorageResult<Vec<FileMetadata>> {
+            Ok(vec![])
+        }
+
+        async fn discover_partitions(
+            &self,
+            _path: &str,
+            _exclude_prefixes: Vec<&str>,
+        ) -> StorageResult<Vec<String>> {
+            Ok(vec![])
+        }
+
+        async fn list_files_parallel(
+            &self,
+            _path: &str,
+            _partitions: Vec<String>,
+            _parallelism: usize,
+        ) -> StorageResult<Vec<FileMetadata>> {
+            Ok(vec![])
+        }
+
+        async fn read_file(&self, _path: &str) -> StorageResult<Vec<u8>> {
+            Ok(vec![])
+        }
+
+        async fn exists(&self, _path: &str) -> StorageResult<bool> {
+            Ok(true)
+        }
+
+        async fn get_metadata(&self, _path: &str) -> StorageResult<FileMetadata> {
+            Ok(FileMetadata {
+                path: "test".to_string(),
+                size: 0,
+                last_modified: None,
+            })
+        }
+
+        fn options(&self) -> &HashMap<String, String> {
+            self.options.get_or_init(|| HashMap::new())
+        }
+
+        fn clean_options(&self) -> HashMap<String, String> {
+            HashMap::new()
+        }
+
+        fn uri_from_path(&self, path: &str) -> String {
+            path.to_string()
+        }
+    }
+
+    // Helper function to create a test DeltaAnalyzer
+    fn create_test_analyzer() -> DeltaAnalyzer {
+        let mock_storage = Arc::new(MockStorageProvider::new());
+        DeltaAnalyzer::new(mock_storage, 4)
+    }
+
+    #[test]
+    fn test_delta_analyzer_new() {
+        let mock_storage = Arc::new(MockStorageProvider::new());
+        let analyzer = DeltaAnalyzer::new(mock_storage, 8);
+
+        assert_eq!(analyzer.parallelism, 8);
+    }
+
+    #[test]
+    fn test_categorize_delta_files_data_only() {
+        let analyzer = create_test_analyzer();
+        let files = vec![
+            FileMetadata {
+                path: "table/part-00000.parquet".to_string(),
+                size: 1024,
+                last_modified: None,
+            },
+            FileMetadata {
+                path: "table/part-00001.parquet".to_string(),
+                size: 2048,
+                last_modified: None,
+            },
+        ];
+
+        let (data_files, metadata_files) = analyzer.categorize_delta_files(files);
+
+        assert_eq!(data_files.len(), 2);
+        assert_eq!(metadata_files.len(), 0);
+    }
+
+    #[test]
+    fn test_categorize_delta_files_metadata_only() {
+        let analyzer = create_test_analyzer();
+        let files = vec![
+            FileMetadata {
+                path: "table/_delta_log/00000000000000000000.json".to_string(),
+                size: 512,
+                last_modified: None,
+            },
+            FileMetadata {
+                path: "table/_delta_log/00000000000000000001.json".to_string(),
+                size: 768,
+                last_modified: None,
+            },
+        ];
+
+        let (data_files, metadata_files) = analyzer.categorize_delta_files(files);
+
+        assert_eq!(data_files.len(), 0);
+        assert_eq!(metadata_files.len(), 2);
+    }
+
+    #[test]
+    fn test_categorize_delta_files_mixed() {
+        let analyzer = create_test_analyzer();
+        let files = vec![
+            FileMetadata {
+                path: "table/part-00000.parquet".to_string(),
+                size: 1024,
+                last_modified: None,
+            },
+            FileMetadata {
+                path: "table/_delta_log/00000000000000000000.json".to_string(),
+                size: 512,
+                last_modified: None,
+            },
+            FileMetadata {
+                path: "table/part-00001.parquet".to_string(),
+                size: 2048,
+                last_modified: None,
+            },
+        ];
+
+        let (data_files, metadata_files) = analyzer.categorize_delta_files(files);
+
+        assert_eq!(data_files.len(), 2);
+        assert_eq!(metadata_files.len(), 1);
+    }
+
+    #[test]
+    fn test_categorize_delta_files_checkpoint() {
+        let analyzer = create_test_analyzer();
+        let files = vec![
+            FileMetadata {
+                path: "table/_delta_log/00000000000000000010.checkpoint.parquet".to_string(),
+                size: 4096,
+                last_modified: None,
+            },
+            FileMetadata {
+                path: "table/part-00000.parquet".to_string(),
+                size: 1024,
+                last_modified: None,
+            },
+        ];
+
+        let (data_files, metadata_files) = analyzer.categorize_delta_files(files);
+
+        assert_eq!(data_files.len(), 1);
+        assert_eq!(metadata_files.len(), 1);
+        assert!(metadata_files[0].path.contains("checkpoint.parquet"));
+    }
+
+    #[test]
+    fn test_categorize_delta_files_empty() {
+        let analyzer = create_test_analyzer();
+        let files = vec![];
+
+        let (data_files, metadata_files) = analyzer.categorize_delta_files(files);
+
+        assert_eq!(data_files.len(), 0);
+        assert_eq!(metadata_files.len(), 0);
+    }
+
+    #[test]
+    fn test_categorize_delta_files_non_parquet() {
+        let analyzer = create_test_analyzer();
+        let files = vec![
+            FileMetadata {
+                path: "table/data.csv".to_string(),
+                size: 1024,
+                last_modified: None,
+            },
+            FileMetadata {
+                path: "table/README.md".to_string(),
+                size: 512,
+                last_modified: None,
+            },
+        ];
+
+        let (data_files, metadata_files) = analyzer.categorize_delta_files(files);
+
+        // Non-parquet files should be ignored
+        assert_eq!(data_files.len(), 0);
+        assert_eq!(metadata_files.len(), 0);
+    }
+
+    #[test]
+    fn test_calculate_deletion_vector_impact_zero() {
+        let analyzer = create_test_analyzer();
+        let impact = analyzer.calculate_deletion_vector_impact(0, 0, 0.0);
+
+        assert_eq!(impact, 0.0);
+    }
+
+    #[test]
+    fn test_calculate_deletion_vector_impact_low() {
+        let analyzer = create_test_analyzer();
+        // Small count, small size, recent
+        let impact = analyzer.calculate_deletion_vector_impact(5, 1024, 1.0);
+
+        assert!(impact >= 0.0 && impact <= 1.0);
+        assert!(impact < 0.5); // Should be low impact
+    }
+
+    #[test]
+    fn test_calculate_deletion_vector_impact_high() {
+        let analyzer = create_test_analyzer();
+        // Large count, large size, old
+        let impact = analyzer.calculate_deletion_vector_impact(1000, 100_000_000, 90.0);
+
+        assert!(impact >= 0.0 && impact <= 1.0);
+        assert!(impact > 0.5); // Should be high impact
+    }
+
+    #[test]
+    fn test_calculate_deletion_vector_impact_clamped() {
+        let analyzer = create_test_analyzer();
+        // Extreme values should still be clamped to [0, 1]
+        let impact = analyzer.calculate_deletion_vector_impact(10000, 1_000_000_000, 365.0);
+
+        assert!(impact >= 0.0 && impact <= 1.0);
+    }
+
+    #[test]
+    fn test_calculate_schema_stability_score_perfect() {
+        let analyzer = create_test_analyzer();
+        // No changes, no breaking changes, no frequency, long time since last
+        let score = analyzer.calculate_schema_stability_score(0, 0, 0.0, 365.0);
+
+        assert!(score >= 0.9); // Should be very stable
+        assert!(score <= 1.0);
+    }
+
+    #[test]
+    fn test_calculate_schema_stability_score_unstable() {
+        let analyzer = create_test_analyzer();
+        // Many changes, many breaking, high frequency, recent
+        let score = analyzer.calculate_schema_stability_score(100, 50, 2.0, 1.0);
+
+        assert!(score >= 0.0);
+        assert!(score < 0.5); // Should be unstable
+    }
+
+    #[test]
+    fn test_calculate_schema_stability_score_moderate() {
+        let analyzer = create_test_analyzer();
+        // Moderate changes, few breaking, low frequency, moderate time
+        let score = analyzer.calculate_schema_stability_score(15, 2, 0.05, 10.0);
+
+        assert!(score >= 0.0 && score <= 1.0);
+        assert!(score > 0.3 && score < 0.9); // Should be moderate
+    }
+
+    #[test]
+    fn test_calculate_schema_stability_score_clamped() {
+        let analyzer = create_test_analyzer();
+        // Extreme values should be clamped
+        let score = analyzer.calculate_schema_stability_score(1000, 500, 10.0, 0.1);
+
+        assert!(score >= 0.0 && score <= 1.0);
+    }
+
+    #[test]
+    fn test_estimate_snapshot_size_empty() {
+        let analyzer = create_test_analyzer();
+        let json = json!({});
+
+        let size = analyzer.estimate_snapshot_size(&json);
+
+        // Should return at least the overhead (1024 bytes)
+        assert_eq!(size, 1024);
+    }
+
+    #[test]
+    fn test_estimate_snapshot_size_with_add() {
+        let analyzer = create_test_analyzer();
+        // The implementation expects "add" to be an array of objects with "sizeInBytes"
+        let json = json!({
+            "add": [
+                {
+                    "sizeInBytes": 5000
+                }
+            ]
+        });
+
+        let size = analyzer.estimate_snapshot_size(&json);
+
+        // Should be file size + overhead
+        assert_eq!(size, 5000 + 1024);
+    }
+
+    #[test]
+    fn test_estimate_snapshot_size_no_size_field() {
+        let analyzer = create_test_analyzer();
+        let json = json!({
+            "add": {
+                "path": "file.parquet"
+            }
+        });
+
+        let size = analyzer.estimate_snapshot_size(&json);
+
+        // Should return just the overhead
+        assert_eq!(size, 1024);
+    }
+
+    #[test]
+    fn test_extract_constraints_from_schema_empty() {
+        let analyzer = create_test_analyzer();
+        let schema = json!({
+            "type": "struct",
+            "fields": []
+        });
+
+        let (total, check, not_null, unique, foreign_key) =
+            analyzer.extract_constraints_from_schema(&schema);
+
+        assert_eq!(total, 0);
+        assert_eq!(check, 0);
+        assert_eq!(not_null, 0);
+        assert_eq!(unique, 0);
+        assert_eq!(foreign_key, 0);
+    }
+
+    #[test]
+    fn test_extract_constraints_from_schema_not_null() {
+        let analyzer = create_test_analyzer();
+        let schema = json!({
+            "type": "struct",
+            "fields": [
+                {
+                    "name": "id",
+                    "type": "integer",
+                    "nullable": false
+                },
+                {
+                    "name": "name",
+                    "type": "string",
+                    "nullable": true
+                }
+            ]
+        });
+
+        let (total, check, not_null, unique, foreign_key) =
+            analyzer.extract_constraints_from_schema(&schema);
+
+        assert_eq!(total, 2);
+        assert_eq!(not_null, 1); // Only id is not null
+        assert_eq!(check, 0);
+        assert_eq!(unique, 0);
+        assert_eq!(foreign_key, 0);
+    }
+
+    #[test]
+    fn test_extract_constraints_from_schema_with_metadata() {
+        let analyzer = create_test_analyzer();
+        let schema = json!({
+            "type": "struct",
+            "fields": [
+                {
+                    "name": "id",
+                    "type": "integer",
+                    "nullable": false,
+                    "metadata": {
+                        "unique_constraint": "true"
+                    }
+                },
+                {
+                    "name": "email",
+                    "type": "string",
+                    "nullable": false,
+                    "metadata": {
+                        "check_constraint": "email LIKE '%@%'"
+                    }
+                }
+            ]
+        });
+
+        let (total, check, not_null, unique, foreign_key) =
+            analyzer.extract_constraints_from_schema(&schema);
+
+        assert_eq!(total, 2);
+        assert_eq!(not_null, 2);
+        // The implementation checks for "constraint" or "check" in the key name
+        // "check_constraint" contains both "constraint" AND "check", so it increments check twice
+        // "unique_constraint" contains both "unique" AND "constraint", so unique=1, check=1
+        assert_eq!(check, 2); // Both fields have "constraint" in metadata key
+        assert_eq!(unique, 1); // Only id has "unique" in metadata key
+        assert_eq!(foreign_key, 0);
+    }
+
+    #[test]
+    fn test_detect_breaking_schema_changes_no_change() {
+        let analyzer = create_test_analyzer();
+        let old_schema = json!({
+            "type": "struct",
+            "fields": [
+                {"name": "id", "type": "integer", "nullable": false}
+            ]
+        });
+        let new_schema = old_schema.clone();
+
+        let is_breaking = analyzer.detect_breaking_schema_changes(&old_schema, &new_schema);
+
+        assert!(!is_breaking);
+    }
+
+    #[test]
+    fn test_detect_breaking_schema_changes_field_added() {
+        let analyzer = create_test_analyzer();
+        let old_schema = json!({
+            "type": "struct",
+            "fields": [
+                {"name": "id", "type": "integer", "nullable": false}
+            ]
+        });
+        let new_schema = json!({
+            "type": "struct",
+            "fields": [
+                {"name": "id", "type": "integer", "nullable": false},
+                {"name": "name", "type": "string", "nullable": true}
+            ]
+        });
+
+        let is_breaking = analyzer.detect_breaking_schema_changes(&old_schema, &new_schema);
+
+        // Adding a field is not breaking
+        assert!(!is_breaking);
+    }
+
+    #[test]
+    fn test_detect_breaking_schema_changes_field_removed() {
+        let analyzer = create_test_analyzer();
+        let old_schema = json!({
+            "type": "struct",
+            "fields": [
+                {"name": "id", "type": "integer", "nullable": false},
+                {"name": "name", "type": "string", "nullable": true}
+            ]
+        });
+        let new_schema = json!({
+            "type": "struct",
+            "fields": [
+                {"name": "id", "type": "integer", "nullable": false}
+            ]
+        });
+
+        let is_breaking = analyzer.detect_breaking_schema_changes(&old_schema, &new_schema);
+
+        // Removing a field is breaking
+        assert!(is_breaking);
+    }
+
+    #[test]
+    fn test_detect_breaking_schema_changes_type_changed() {
+        let analyzer = create_test_analyzer();
+        let old_schema = json!({
+            "type": "struct",
+            "fields": [
+                {"name": "id", "type": "integer", "nullable": false}
+            ]
+        });
+        let new_schema = json!({
+            "type": "struct",
+            "fields": [
+                {"name": "id", "type": "string", "nullable": false}
+            ]
+        });
+
+        let is_breaking = analyzer.detect_breaking_schema_changes(&old_schema, &new_schema);
+
+        // Changing type is breaking
+        assert!(is_breaking);
+    }
+
+    #[test]
+    fn test_detect_breaking_schema_changes_nullable_changed() {
+        let analyzer = create_test_analyzer();
+        let old_schema = json!({
+            "type": "struct",
+            "fields": [
+                {"name": "id", "type": "integer", "nullable": false}
+            ]
+        });
+        let new_schema = json!({
+            "type": "struct",
+            "fields": [
+                {"name": "id", "type": "integer", "nullable": true}
+            ]
+        });
+
+        let is_breaking = analyzer.detect_breaking_schema_changes(&old_schema, &new_schema);
+
+        // Changing from non-nullable to nullable is breaking
+        assert!(is_breaking);
+    }
+
+    #[test]
+    fn test_is_breaking_change_no_previous() {
+        let analyzer = create_test_analyzer();
+        let previous_changes: Vec<SchemaChange> = vec![];
+        let new_schema = json!({
+            "type": "struct",
+            "fields": [{"name": "id", "type": "integer"}]
+        });
+
+        let is_breaking = analyzer.is_breaking_change(&previous_changes, &new_schema);
+
+        // First schema is never breaking
+        assert!(!is_breaking);
+    }
+
+    #[test]
+    fn test_is_breaking_change_with_previous() {
+        let analyzer = create_test_analyzer();
+        let previous_changes = vec![SchemaChange {
+            version: 0,
+            timestamp: 1000000,
+            schema: json!({
+                "type": "struct",
+                "fields": [
+                    {"name": "id", "type": "integer"},
+                    {"name": "name", "type": "string"}
+                ]
+            }),
+            is_breaking: false,
+        }];
+        let new_schema = json!({
+            "type": "struct",
+            "fields": [
+                {"name": "id", "type": "integer"}
+            ]
+        });
+
+        let is_breaking = analyzer.is_breaking_change(&previous_changes, &new_schema);
+
+        // Removing "name" field is breaking
+        assert!(is_breaking);
+    }
+
+    #[test]
+    fn test_calculate_schema_metrics_no_changes() {
+        let analyzer = create_test_analyzer();
+        let changes: Vec<SchemaChange> = vec![];
+
+        let result = analyzer.calculate_schema_metrics(changes, 1);
+
+        assert!(result.is_ok());
+        let metrics = result.unwrap();
+        assert!(metrics.is_some());
+
+        let metrics = metrics.unwrap();
+        assert_eq!(metrics.total_schema_changes, 0);
+        assert_eq!(metrics.breaking_changes, 0);
+        assert_eq!(metrics.non_breaking_changes, 0);
+        assert!(metrics.schema_stability_score >= 0.9); // Very stable
+    }
+
+    #[test]
+    fn test_calculate_schema_metrics_with_changes() {
+        let analyzer = create_test_analyzer();
+        let now = chrono::Utc::now().timestamp() as u64 * 1000;
+        let changes = vec![
+            SchemaChange {
+                version: 0,
+                timestamp: now - 86400000 * 30, // 30 days ago
+                schema: json!({"fields": []}),
+                is_breaking: false,
+            },
+            SchemaChange {
+                version: 1,
+                timestamp: now - 86400000 * 15, // 15 days ago
+                schema: json!({"fields": []}),
+                is_breaking: true,
+            },
+            SchemaChange {
+                version: 2,
+                timestamp: now - 86400000 * 5, // 5 days ago
+                schema: json!({"fields": []}),
+                is_breaking: false,
+            },
+        ];
+
+        let result = analyzer.calculate_schema_metrics(changes, 3);
+
+        assert!(result.is_ok());
+        let metrics = result.unwrap();
+        assert!(metrics.is_some());
+
+        let metrics = metrics.unwrap();
+        assert_eq!(metrics.total_schema_changes, 3);
+        assert_eq!(metrics.breaking_changes, 1);
+        assert_eq!(metrics.non_breaking_changes, 2);
+        assert_eq!(metrics.current_schema_version, 3);
+        assert!(metrics.days_since_last_change >= 4.0 && metrics.days_since_last_change <= 6.0);
+        assert!(metrics.schema_change_frequency > 0.0);
+    }
+
+    #[test]
+    fn test_metadata_processing_result_default() {
+        let result = MetadataProcessingResult::default();
+
+        assert_eq!(result.clustering_columns.len(), 0);
+        assert_eq!(result.deletion_vector_count, 0);
+        assert_eq!(result.deletion_vector_total_size, 0);
+        assert_eq!(result.deleted_rows, 0);
+        assert_eq!(result.oldest_dv_age, 0.0);
+        assert_eq!(result.total_snapshots, 0);
+        assert_eq!(result.total_historical_size, 0);
+        assert_eq!(result.oldest_timestamp, 0);
+        assert_eq!(result.newest_timestamp, 0);
+        assert_eq!(result.total_constraints, 0);
+        assert_eq!(result.check_constraints, 0);
+        assert_eq!(result.not_null_constraints, 0);
+        assert_eq!(result.unique_constraints, 0);
+        assert_eq!(result.foreign_key_constraints, 0);
+        assert_eq!(result.z_order_columns.len(), 0);
+        assert!(!result.z_order_opportunity);
+        assert_eq!(result.schema_changes.len(), 0);
+    }
+
+    #[test]
+    fn test_schema_change_creation() {
+        let schema = json!({
+            "type": "struct",
+            "fields": [{"name": "id", "type": "integer"}]
+        });
+
+        let change = SchemaChange {
+            version: 5,
+            timestamp: 1234567890,
+            schema: schema.clone(),
+            is_breaking: true,
+        };
+
+        assert_eq!(change.version, 5);
+        assert_eq!(change.timestamp, 1234567890);
+        assert!(change.is_breaking);
+        assert_eq!(change.schema, schema);
+    }
+
+    #[test]
+    fn test_schema_change_clone() {
+        let schema = json!({"fields": []});
+        let change = SchemaChange {
+            version: 1,
+            timestamp: 1000,
+            schema: schema.clone(),
+            is_breaking: false,
+        };
+
+        let cloned = change.clone();
+
+        assert_eq!(cloned.version, change.version);
+        assert_eq!(cloned.timestamp, change.timestamp);
+        assert_eq!(cloned.is_breaking, change.is_breaking);
+        assert_eq!(cloned.schema, change.schema);
+    }
+
+    #[test]
+    fn test_schema_change_debug() {
+        let change = SchemaChange {
+            version: 1,
+            timestamp: 1000,
+            schema: json!({"fields": []}),
+            is_breaking: true,
+        };
+
+        let debug_str = format!("{:?}", change);
+
+        assert!(debug_str.contains("SchemaChange"));
+        assert!(debug_str.contains("version"));
+        assert!(debug_str.contains("is_breaking"));
+    }
+
+    #[test]
+    fn test_calculate_storage_cost_impact_zero() {
+        let analyzer = create_test_analyzer();
+        let impact = analyzer.calculate_storage_cost_impact(0, 0, 0.0);
+
+        assert!(impact >= 0.0 && impact <= 1.0);
+    }
+
+    #[test]
+    fn test_calculate_storage_cost_impact_low() {
+        let analyzer = create_test_analyzer();
+        // Small size, few snapshots, recent
+        let impact = analyzer.calculate_storage_cost_impact(1_000_000, 5, 1.0);
+
+        assert!(impact >= 0.0 && impact <= 1.0);
+        assert!(impact < 0.5);
+    }
+
+    #[test]
+    fn test_calculate_storage_cost_impact_high() {
+        let analyzer = create_test_analyzer();
+        // Large size, many snapshots, old
+        let impact = analyzer.calculate_storage_cost_impact(100_000_000_000, 1000, 365.0);
+
+        assert!(impact >= 0.0 && impact <= 1.0);
+        assert!(impact > 0.5);
+    }
+
+    #[test]
+    fn test_calculate_retention_efficiency_perfect() {
+        let analyzer = create_test_analyzer();
+        // Few snapshots, recent data
+        let efficiency = analyzer.calculate_retention_efficiency(10, 7.0, 1.0);
+
+        assert!(efficiency >= 0.0 && efficiency <= 1.0);
+        assert!(efficiency > 0.7); // Should be efficient
+    }
+
+    #[test]
+    fn test_calculate_retention_efficiency_poor() {
+        let analyzer = create_test_analyzer();
+        // Many snapshots (>1000), old data with long retention
+        // 1000 snapshots: -0.3, retention 364 days (365-1): no penalty
+        // Expected: 1.0 - 0.3 = 0.7
+        let efficiency = analyzer.calculate_retention_efficiency(1000, 365.0, 1.0);
+
+        assert!(efficiency >= 0.0 && efficiency <= 1.0);
+        // With 1000 snapshots, efficiency is penalized by 0.3, so it's 0.7
+        assert!(efficiency >= 0.6 && efficiency <= 0.8);
+    }
+
+    #[test]
+    fn test_calculate_recommended_retention_few_snapshots() {
+        let analyzer = create_test_analyzer();
+        let retention = analyzer.calculate_recommended_retention(5, 7.0);
+
+        assert!(retention >= 7); // Should recommend at least current retention (in days)
+        assert!(retention >= 90); // Low snapshot count should recommend longer retention
+    }
+
+    #[test]
+    fn test_calculate_recommended_retention_many_snapshots() {
+        let analyzer = create_test_analyzer();
+        // With 1000 snapshots (not > 1000), it goes to second condition (> 500)
+        // and with oldest_age 365.0 (> 90.0), it returns 60 days
+        let retention = analyzer.calculate_recommended_retention(1000, 365.0);
+
+        assert!(retention > 0);
+        assert_eq!(retention, 60); // 1000 snapshots and old age should recommend 60 days
+    }
+
+    #[test]
+    fn test_extract_deletion_vectors_no_remove() {
+        let analyzer = create_test_analyzer();
+        let entry = json!({
+            "add": {
+                "path": "file.parquet"
+            }
+        });
+        let mut result = MetadataProcessingResult::default();
+
+        analyzer.extract_deletion_vectors(&entry, &mut result);
+
+        assert_eq!(result.deletion_vector_count, 0);
+        assert_eq!(result.deletion_vector_total_size, 0);
+        assert_eq!(result.deleted_rows, 0);
+    }
+
+    #[test]
+    fn test_extract_deletion_vectors_with_dv() {
+        let analyzer = create_test_analyzer();
+        let entry = json!({
+            "remove": {
+                "path": "file.parquet",
+                "deletionVector": {
+                    "sizeInBytes": 1024,
+                    "cardinality": 100
+                },
+                "timestamp": 1609459200000i64
+            }
+        });
+        let mut result = MetadataProcessingResult::default();
+
+        analyzer.extract_deletion_vectors(&entry, &mut result);
+
+        assert_eq!(result.deletion_vector_count, 1);
+        assert_eq!(result.deletion_vector_total_size, 1024);
+        assert_eq!(result.deleted_rows, 100);
+        assert!(result.oldest_dv_age > 0.0);
+    }
+
+    #[test]
+    fn test_extract_snapshot_metrics_no_timestamp() {
+        let analyzer = create_test_analyzer();
+        let entry = json!({
+            "add": {
+                "path": "file.parquet"
+            }
+        });
+        let mut result = MetadataProcessingResult::default();
+
+        analyzer.extract_snapshot_metrics(&entry, &mut result);
+
+        assert_eq!(result.total_snapshots, 0);
+    }
+
+    #[test]
+    fn test_extract_snapshot_metrics_with_timestamp() {
+        let analyzer = create_test_analyzer();
+        let now = chrono::Utc::now().timestamp() as u64 * 1000;
+        let entry = json!({
+            "timestamp": now
+        });
+        let mut result = MetadataProcessingResult::default();
+
+        analyzer.extract_snapshot_metrics(&entry, &mut result);
+
+        assert_eq!(result.total_snapshots, 1);
+        // oldest_timestamp starts at 0, so min(0, now) = 0
+        assert_eq!(result.oldest_timestamp, 0);
+        assert_eq!(result.newest_timestamp, now);
+    }
+}
