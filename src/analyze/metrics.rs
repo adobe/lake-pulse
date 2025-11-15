@@ -2104,4 +2104,678 @@ mod tests {
         assert!(gantt_output.contains("analyzer_new_dur"));
         assert!(gantt_output.contains("total_dur"));
     }
+
+    // HealthMetrics tests
+    #[test]
+    fn test_health_metrics_new() {
+        let metrics = HealthMetrics::new();
+
+        assert_eq!(metrics.total_files, 0);
+        assert_eq!(metrics.total_size_bytes, 0);
+        assert_eq!(metrics.partition_count, 0);
+        assert_eq!(metrics.avg_file_size_bytes, 0.0);
+        assert_eq!(metrics.health_score, 0.0);
+        assert_eq!(metrics.file_size_distribution.small_files, 0);
+        assert_eq!(metrics.file_size_distribution.medium_files, 0);
+        assert_eq!(metrics.file_size_distribution.large_files, 0);
+        assert_eq!(metrics.file_size_distribution.very_large_files, 0);
+        assert!(metrics.unreferenced_files.is_empty());
+        assert!(metrics.partitions.is_empty());
+        assert!(metrics.recommendations.is_empty());
+        assert!(metrics.clustering.is_none());
+        assert!(metrics.deletion_vector_metrics.is_none());
+        assert!(metrics.schema_evolution.is_none());
+        assert!(metrics.time_travel_metrics.is_none());
+        assert!(metrics.table_constraints.is_none());
+        assert!(metrics.file_compaction.is_none());
+    }
+
+    #[test]
+    fn test_health_metrics_default() {
+        let metrics = HealthMetrics::default();
+
+        assert_eq!(metrics.total_files, 0);
+        assert_eq!(metrics.health_score, 0.0);
+    }
+
+    #[test]
+    fn test_calculate_health_score_perfect() {
+        let mut metrics = HealthMetrics::new();
+        metrics.total_files = 100;
+        metrics.file_size_distribution.medium_files = 100; // All medium files
+
+        let score = metrics.calculate_health_score();
+
+        assert!(
+            score >= 0.9 && score <= 1.0,
+            "Perfect health should score high"
+        );
+    }
+
+    #[test]
+    fn test_calculate_health_score_with_unreferenced_files() {
+        let mut metrics = HealthMetrics::new();
+        metrics.total_files = 100;
+        metrics.unreferenced_files = vec![
+            FileInfo {
+                path: "file1.parquet".to_string(),
+                size_bytes: 1024,
+                last_modified: None,
+                is_referenced: false,
+            };
+            30
+        ]; // 30% unreferenced
+
+        let score = metrics.calculate_health_score();
+
+        // Should be penalized by 30% * 0.3 = 0.09
+        assert!(score < 1.0);
+        assert!(score >= 0.85 && score <= 0.95);
+    }
+
+    #[test]
+    fn test_calculate_health_score_with_small_files() {
+        let mut metrics = HealthMetrics::new();
+        metrics.total_files = 100;
+        metrics.file_size_distribution.small_files = 60; // 60% small files
+
+        let score = metrics.calculate_health_score();
+
+        // Should be penalized by 60% * 0.2 = 0.12
+        assert!(score < 1.0);
+        assert!(score >= 0.8 && score <= 0.9);
+    }
+
+    #[test]
+    fn test_calculate_health_score_with_very_large_files() {
+        let mut metrics = HealthMetrics::new();
+        metrics.total_files = 100;
+        metrics.file_size_distribution.very_large_files = 20; // 20% very large
+
+        let score = metrics.calculate_health_score();
+
+        // Should be penalized by 20% * 0.1 = 0.02
+        assert!(score >= 0.95 && score <= 1.0);
+    }
+
+    #[test]
+    fn test_calculate_health_score_with_data_skew() {
+        let mut metrics = HealthMetrics::new();
+        metrics.data_skew.partition_skew_score = 0.8; // High partition skew
+        metrics.data_skew.file_size_skew_score = 0.6; // Moderate file size skew
+
+        let score = metrics.calculate_health_score();
+
+        // Should be penalized by 0.8 * 0.15 + 0.6 * 0.1 = 0.12 + 0.06 = 0.18
+        assert!(score >= 0.75 && score <= 0.85);
+    }
+
+    #[test]
+    fn test_calculate_health_score_clamped() {
+        let mut metrics = HealthMetrics::new();
+        // Set extreme values that would result in negative score
+        metrics.total_files = 100;
+        metrics.unreferenced_files = vec![
+            FileInfo {
+                path: "file.parquet".to_string(),
+                size_bytes: 1024,
+                last_modified: None,
+                is_referenced: false,
+            };
+            100
+        ];
+        metrics.file_size_distribution.small_files = 100;
+        metrics.data_skew.partition_skew_score = 1.0;
+        metrics.data_skew.file_size_skew_score = 1.0;
+
+        let score = metrics.calculate_health_score();
+
+        // Score should be clamped to [0.0, 1.0]
+        assert!(score >= 0.0 && score <= 1.0);
+    }
+
+    #[test]
+    fn test_calculate_data_skew_empty_partitions() {
+        let mut metrics = HealthMetrics::new();
+
+        metrics.calculate_data_skew();
+
+        assert_eq!(metrics.data_skew.partition_skew_score, 0.0);
+        assert_eq!(metrics.data_skew.file_size_skew_score, 0.0);
+    }
+
+    #[test]
+    fn test_calculate_data_skew_balanced() {
+        let mut metrics = HealthMetrics::new();
+        // Create balanced partitions
+        metrics.partitions = vec![
+            PartitionInfo {
+                partition_values: HashMap::new(),
+                file_count: 10,
+                total_size_bytes: 1000,
+                avg_file_size_bytes: 100.0,
+                files: Vec::new(),
+            };
+            5
+        ];
+
+        metrics.calculate_data_skew();
+
+        // Perfectly balanced should have low skew
+        assert!(metrics.data_skew.partition_skew_score < 0.1);
+        assert_eq!(metrics.data_skew.largest_partition_size, 1000);
+        assert_eq!(metrics.data_skew.smallest_partition_size, 1000);
+        assert_eq!(metrics.data_skew.avg_partition_size, 1000);
+    }
+
+    #[test]
+    fn test_calculate_data_skew_unbalanced() {
+        let mut metrics = HealthMetrics::new();
+        // Create unbalanced partitions
+        metrics.partitions = vec![
+            PartitionInfo {
+                partition_values: HashMap::new(),
+                file_count: 100,
+                total_size_bytes: 10000,
+                avg_file_size_bytes: 100.0,
+                files: Vec::new(),
+            },
+            PartitionInfo {
+                partition_values: HashMap::new(),
+                file_count: 10,
+                total_size_bytes: 1000,
+                avg_file_size_bytes: 100.0,
+                files: Vec::new(),
+            },
+            PartitionInfo {
+                partition_values: HashMap::new(),
+                file_count: 5,
+                total_size_bytes: 500,
+                avg_file_size_bytes: 100.0,
+                files: Vec::new(),
+            },
+        ];
+
+        metrics.calculate_data_skew();
+
+        // Unbalanced should have higher skew
+        assert!(metrics.data_skew.partition_skew_score > 0.3);
+        assert_eq!(metrics.data_skew.largest_partition_size, 10000);
+        assert_eq!(metrics.data_skew.smallest_partition_size, 500);
+    }
+
+    #[test]
+    fn test_calculate_snapshot_health_low_count() {
+        let mut metrics = HealthMetrics::new();
+
+        metrics.calculate_snapshot_health(10);
+
+        assert_eq!(metrics.snapshot_health.snapshot_count, 10);
+        assert_eq!(metrics.snapshot_health.snapshot_retention_risk, 0.0);
+    }
+
+    #[test]
+    fn test_calculate_snapshot_health_medium_count() {
+        let mut metrics = HealthMetrics::new();
+
+        metrics.calculate_snapshot_health(30);
+
+        assert_eq!(metrics.snapshot_health.snapshot_count, 30);
+        assert_eq!(metrics.snapshot_health.snapshot_retention_risk, 0.2);
+    }
+
+    #[test]
+    fn test_calculate_snapshot_health_high_count() {
+        let mut metrics = HealthMetrics::new();
+
+        metrics.calculate_snapshot_health(75);
+
+        assert_eq!(metrics.snapshot_health.snapshot_count, 75);
+        assert_eq!(metrics.snapshot_health.snapshot_retention_risk, 0.5);
+    }
+
+    #[test]
+    fn test_calculate_snapshot_health_very_high_count() {
+        let mut metrics = HealthMetrics::new();
+
+        metrics.calculate_snapshot_health(150);
+
+        assert_eq!(metrics.snapshot_health.snapshot_count, 150);
+        assert_eq!(metrics.snapshot_health.snapshot_retention_risk, 0.8);
+    }
+
+    #[test]
+    fn test_generate_recommendations_unreferenced_files() {
+        let mut metrics = HealthMetrics::new();
+        metrics.unreferenced_files = vec![
+            FileInfo {
+                path: "file1.parquet".to_string(),
+                size_bytes: 1024,
+                last_modified: None,
+                is_referenced: false,
+            },
+            FileInfo {
+                path: "file2.parquet".to_string(),
+                size_bytes: 2048,
+                last_modified: None,
+                is_referenced: false,
+            },
+        ];
+        metrics.unreferenced_size_bytes = 3072;
+
+        metrics.generate_recommendations();
+
+        assert!(!metrics.recommendations.is_empty());
+        assert!(metrics.recommendations[0].contains("unreferenced files"));
+        assert!(metrics.recommendations[0].contains("3072"));
+    }
+
+    #[test]
+    fn test_generate_recommendations_small_files() {
+        let mut metrics = HealthMetrics::new();
+        metrics.total_files = 100;
+        metrics.file_size_distribution.small_files = 60; // 60% small files
+
+        metrics.generate_recommendations();
+
+        assert!(!metrics.recommendations.is_empty());
+        assert!(metrics
+            .recommendations
+            .iter()
+            .any(|r| r.contains("small files") && r.contains("compacting")));
+    }
+
+    #[test]
+    fn test_generate_recommendations_very_large_files() {
+        let mut metrics = HealthMetrics::new();
+        metrics.total_files = 100;
+        metrics.file_size_distribution.very_large_files = 15; // 15% very large
+
+        metrics.generate_recommendations();
+
+        assert!(!metrics.recommendations.is_empty());
+        assert!(metrics
+            .recommendations
+            .iter()
+            .any(|r| r.contains("very large files") && r.contains("splitting")));
+    }
+
+    #[test]
+    fn test_generate_recommendations_too_many_files_per_partition() {
+        let mut metrics = HealthMetrics::new();
+        metrics.total_files = 1000;
+        metrics.partition_count = 5; // 200 files per partition
+
+        metrics.generate_recommendations();
+
+        assert!(!metrics.recommendations.is_empty());
+        assert!(metrics
+            .recommendations
+            .iter()
+            .any(|r| r.contains("files per partition") && r.contains("repartitioning")));
+    }
+
+    #[test]
+    fn test_generate_recommendations_too_few_files_per_partition() {
+        let mut metrics = HealthMetrics::new();
+        metrics.total_files = 10;
+        metrics.partition_count = 5; // 2 files per partition
+
+        metrics.generate_recommendations();
+
+        assert!(!metrics.recommendations.is_empty());
+        assert!(metrics
+            .recommendations
+            .iter()
+            .any(|r| r.contains("Low number of files") && r.contains("consolidating")));
+    }
+
+    #[test]
+    fn test_generate_recommendations_empty_partitions() {
+        let mut metrics = HealthMetrics::new();
+        metrics.partitions = vec![
+            PartitionInfo {
+                partition_values: HashMap::new(),
+                file_count: 0,
+                total_size_bytes: 0,
+                avg_file_size_bytes: 0.0,
+                files: Vec::new(),
+            },
+            PartitionInfo {
+                partition_values: HashMap::new(),
+                file_count: 10,
+                total_size_bytes: 1000,
+                avg_file_size_bytes: 100.0,
+                files: Vec::new(),
+            },
+        ];
+
+        metrics.generate_recommendations();
+
+        assert!(!metrics.recommendations.is_empty());
+        assert!(metrics
+            .recommendations
+            .iter()
+            .any(|r| r.contains("empty partitions")));
+    }
+
+    #[test]
+    fn test_generate_recommendations_high_partition_skew() {
+        let mut metrics = HealthMetrics::new();
+        metrics.data_skew.partition_skew_score = 0.8;
+
+        metrics.generate_recommendations();
+
+        assert!(!metrics.recommendations.is_empty());
+        assert!(metrics
+            .recommendations
+            .iter()
+            .any(|r| r.contains("partition skew") && r.contains("repartitioning")));
+    }
+
+    #[test]
+    fn test_generate_recommendations_high_file_size_skew() {
+        let mut metrics = HealthMetrics::new();
+        metrics.data_skew.file_size_skew_score = 0.7;
+
+        metrics.generate_recommendations();
+
+        assert!(!metrics.recommendations.is_empty());
+        assert!(metrics
+            .recommendations
+            .iter()
+            .any(|r| r.contains("file size skew") && r.contains("OPTIMIZE")));
+    }
+
+    #[test]
+    fn test_generate_recommendations_large_metadata() {
+        let mut metrics = HealthMetrics::new();
+        metrics.metadata_health.metadata_total_size_bytes = 60 * 1024 * 1024; // 60MB
+
+        metrics.generate_recommendations();
+
+        assert!(!metrics.recommendations.is_empty());
+        assert!(metrics
+            .recommendations
+            .iter()
+            .any(|r| r.contains("metadata size") && r.contains("VACUUM")));
+    }
+
+    #[test]
+    fn test_generate_recommendations_high_snapshot_retention_risk() {
+        let mut metrics = HealthMetrics::new();
+        metrics.snapshot_health.snapshot_retention_risk = 0.9;
+
+        metrics.generate_recommendations();
+
+        assert!(!metrics.recommendations.is_empty());
+        assert!(metrics
+            .recommendations
+            .iter()
+            .any(|r| r.contains("snapshot retention risk") && r.contains("VACUUM")));
+    }
+
+    // HealthReport tests
+    #[test]
+    fn test_health_report_to_json() {
+        let report = HealthReport {
+            table_path: "/path/to/table".to_string(),
+            table_type: "delta".to_string(),
+            analysis_timestamp: "2024-01-01T00:00:00Z".to_string(),
+            metrics: HealthMetrics::new(),
+            health_score: 0.85,
+            timed_metrics: TimedLikeMetrics {
+                duration_collection: LinkedList::new(),
+            },
+        };
+
+        let json = report.to_json(false).expect("Should serialize to JSON");
+
+        assert!(json.contains("table_path"));
+        assert!(json.contains("/path/to/table"));
+        assert!(json.contains("delta"));
+        assert!(json.contains("0.85"));
+    }
+
+    #[test]
+    fn test_health_report_to_json_exclude_files() {
+        let mut metrics = HealthMetrics::new();
+        metrics.unreferenced_files = vec![FileInfo {
+            path: "file1.parquet".to_string(),
+            size_bytes: 1024,
+            last_modified: None,
+            is_referenced: false,
+        }];
+        metrics.partitions = vec![PartitionInfo {
+            partition_values: HashMap::new(),
+            file_count: 1,
+            total_size_bytes: 1024,
+            avg_file_size_bytes: 1024.0,
+            files: vec![FileInfo {
+                path: "file2.parquet".to_string(),
+                size_bytes: 1024,
+                last_modified: None,
+                is_referenced: true,
+            }],
+        }];
+
+        let report = HealthReport {
+            table_path: "/path/to/table".to_string(),
+            table_type: "delta".to_string(),
+            analysis_timestamp: "2024-01-01T00:00:00Z".to_string(),
+            metrics,
+            health_score: 0.85,
+            timed_metrics: TimedLikeMetrics {
+                duration_collection: LinkedList::new(),
+            },
+        };
+
+        let json = report.to_json(true).expect("Should serialize to JSON");
+
+        // Should not contain file paths when exclude_files is true
+        assert!(!json.contains("file1.parquet"));
+        assert!(!json.contains("file2.parquet"));
+    }
+
+    #[test]
+    fn test_health_report_display() {
+        let mut metrics = HealthMetrics::new();
+        metrics.total_files = 100;
+        metrics.total_size_bytes = 1024 * 1024 * 1024; // 1GB
+        metrics.avg_file_size_bytes = 10.0 * 1024.0 * 1024.0; // 10MB
+        metrics.partition_count = 5;
+        metrics.file_size_distribution.small_files = 20;
+        metrics.file_size_distribution.medium_files = 60;
+        metrics.file_size_distribution.large_files = 15;
+        metrics.file_size_distribution.very_large_files = 5;
+
+        let report = HealthReport {
+            table_path: "/path/to/table".to_string(),
+            table_type: "delta".to_string(),
+            analysis_timestamp: "2024-01-01T00:00:00Z".to_string(),
+            metrics,
+            health_score: 0.85,
+            timed_metrics: TimedLikeMetrics {
+                duration_collection: LinkedList::new(),
+            },
+        };
+
+        let display = format!("{}", report);
+
+        assert!(display.contains("Table Health Report"));
+        assert!(display.contains("85.0%"));
+        assert!(display.contains("/path/to/table"));
+        assert!(display.contains("delta"));
+        assert!(display.contains("Total Files"));
+        assert!(display.contains("100"));
+    }
+
+    // FileInfo tests
+    #[test]
+    fn test_file_info_creation() {
+        let file_info = FileInfo {
+            path: "data/file.parquet".to_string(),
+            size_bytes: 1024 * 1024,
+            last_modified: Some("2024-01-01T00:00:00Z".to_string()),
+            is_referenced: true,
+        };
+
+        assert_eq!(file_info.path, "data/file.parquet");
+        assert_eq!(file_info.size_bytes, 1024 * 1024);
+        assert_eq!(
+            file_info.last_modified,
+            Some("2024-01-01T00:00:00Z".to_string())
+        );
+        assert!(file_info.is_referenced);
+    }
+
+    #[test]
+    fn test_file_info_serialization() {
+        let file_info = FileInfo {
+            path: "data/file.parquet".to_string(),
+            size_bytes: 1024,
+            last_modified: None,
+            is_referenced: false,
+        };
+
+        let json = serde_json::to_string(&file_info).expect("Should serialize");
+
+        assert!(json.contains("data/file.parquet"));
+        assert!(json.contains("1024"));
+        assert!(json.contains("false"));
+    }
+
+    // PartitionInfo tests
+    #[test]
+    fn test_partition_info_creation() {
+        let mut partition_values = HashMap::new();
+        partition_values.insert("year".to_string(), "2024".to_string());
+        partition_values.insert("month".to_string(), "01".to_string());
+
+        let partition_info = PartitionInfo {
+            partition_values,
+            file_count: 10,
+            total_size_bytes: 10240,
+            avg_file_size_bytes: 1024.0,
+            files: Vec::new(),
+        };
+
+        assert_eq!(partition_info.file_count, 10);
+        assert_eq!(partition_info.total_size_bytes, 10240);
+        assert_eq!(partition_info.avg_file_size_bytes, 1024.0);
+        assert_eq!(partition_info.partition_values.len(), 2);
+    }
+
+    // ClusteringInfo tests
+    #[test]
+    fn test_clustering_info_creation() {
+        let clustering_info = ClusteringInfo {
+            clustering_columns: vec!["col1".to_string(), "col2".to_string()],
+            cluster_count: 10,
+            avg_files_per_cluster: 5.5,
+            avg_cluster_size_bytes: 1024.0 * 1024.0,
+        };
+
+        assert_eq!(clustering_info.clustering_columns.len(), 2);
+        assert_eq!(clustering_info.cluster_count, 10);
+        assert_eq!(clustering_info.avg_files_per_cluster, 5.5);
+    }
+
+    // DeletionVectorMetrics tests
+    #[test]
+    fn test_deletion_vector_metrics_creation() {
+        let dv_metrics = DeletionVectorMetrics {
+            deletion_vector_count: 5,
+            total_deletion_vector_size_bytes: 5120,
+            avg_deletion_vector_size_bytes: 1024.0,
+            deletion_vector_age_days: 15.5,
+            deleted_rows_count: 1000,
+            deletion_vector_impact_score: 0.6,
+        };
+
+        assert_eq!(dv_metrics.deletion_vector_count, 5);
+        assert_eq!(dv_metrics.total_deletion_vector_size_bytes, 5120);
+        assert_eq!(dv_metrics.deleted_rows_count, 1000);
+        assert_eq!(dv_metrics.deletion_vector_impact_score, 0.6);
+    }
+
+    // SchemaEvolutionMetrics tests
+    #[test]
+    fn test_schema_evolution_metrics_creation() {
+        let schema_metrics = SchemaEvolutionMetrics {
+            total_schema_changes: 10,
+            breaking_changes: 2,
+            non_breaking_changes: 8,
+            schema_stability_score: 0.8,
+            days_since_last_change: 5.0,
+            schema_change_frequency: 0.5,
+            current_schema_version: 11,
+        };
+
+        assert_eq!(schema_metrics.total_schema_changes, 10);
+        assert_eq!(schema_metrics.breaking_changes, 2);
+        assert_eq!(schema_metrics.non_breaking_changes, 8);
+        assert_eq!(schema_metrics.schema_stability_score, 0.8);
+    }
+
+    // TimeTravelMetrics tests
+    #[test]
+    fn test_time_travel_metrics_creation() {
+        let tt_metrics = TimeTravelMetrics {
+            total_snapshots: 50,
+            oldest_snapshot_age_days: 30.0,
+            newest_snapshot_age_days: 1.0,
+            total_historical_size_bytes: 1024 * 1024 * 1024,
+            avg_snapshot_size_bytes: 20.0 * 1024.0 * 1024.0,
+            storage_cost_impact_score: 0.5,
+            retention_efficiency_score: 0.7,
+            recommended_retention_days: 30,
+        };
+
+        assert_eq!(tt_metrics.total_snapshots, 50);
+        assert_eq!(tt_metrics.oldest_snapshot_age_days, 30.0);
+        assert_eq!(tt_metrics.recommended_retention_days, 30);
+    }
+
+    // TableConstraintsMetrics tests
+    #[test]
+    fn test_table_constraints_metrics_creation() {
+        let constraint_metrics = TableConstraintsMetrics {
+            total_constraints: 10,
+            check_constraints: 3,
+            not_null_constraints: 5,
+            unique_constraints: 1,
+            foreign_key_constraints: 1,
+            constraint_violation_risk: 0.2,
+            data_quality_score: 0.9,
+            constraint_coverage_score: 0.8,
+        };
+
+        assert_eq!(constraint_metrics.total_constraints, 10);
+        assert_eq!(constraint_metrics.check_constraints, 3);
+        assert_eq!(constraint_metrics.not_null_constraints, 5);
+        assert_eq!(constraint_metrics.data_quality_score, 0.9);
+    }
+
+    // FileCompactionMetrics tests
+    #[test]
+    fn test_file_compaction_metrics_creation() {
+        let compaction_metrics = FileCompactionMetrics {
+            compaction_opportunity_score: 0.8,
+            small_files_count: 100,
+            small_files_size_bytes: 1024 * 1024,
+            potential_compaction_files: 80,
+            estimated_compaction_savings_bytes: 512 * 1024,
+            recommended_target_file_size_bytes: 128 * 1024 * 1024,
+            compaction_priority: "high".to_string(),
+            z_order_opportunity: true,
+            z_order_columns: vec!["col1".to_string(), "col2".to_string()],
+        };
+
+        assert_eq!(compaction_metrics.compaction_opportunity_score, 0.8);
+        assert_eq!(compaction_metrics.small_files_count, 100);
+        assert_eq!(compaction_metrics.compaction_priority, "high");
+        assert!(compaction_metrics.z_order_opportunity);
+        assert_eq!(compaction_metrics.z_order_columns.len(), 2);
+    }
 }
