@@ -221,7 +221,8 @@ mod tests {
     fn test_empty_collection() {
         let collection = LinkedList::new();
         let result = to_ascii_gantt(&collection, None);
-        assert_eq!(result.unwrap(), "No timing data available");
+        assert!(result.is_err());
+        assert_eq!(result.unwrap_err().to_string(), "No timing data available");
     }
 
     #[test]

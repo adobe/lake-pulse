@@ -125,3 +125,406 @@ where
     info!("{} | {}, took={}", metric_name, log_line, dur.as_millis());
     result
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_is_ndjson_valid() {
+        let content = r#"{"key": "value1"}
+{"key": "value2"}
+{"key": "value3"}"#;
+        assert!(is_ndjson(content));
+    }
+
+    #[test]
+    fn test_is_ndjson_with_arrays() {
+        let content = r#"[1, 2, 3]
+[4, 5, 6]
+[7, 8, 9]"#;
+        assert!(is_ndjson(content));
+    }
+
+    #[test]
+    fn test_is_ndjson_mixed_objects_arrays() {
+        let content = r#"{"key": "value"}
+[1, 2, 3]
+{"another": "object"}"#;
+        assert!(is_ndjson(content));
+    }
+
+    #[test]
+    fn test_is_ndjson_single_line() {
+        let content = r#"{"key": "value"}"#;
+        assert!(!is_ndjson(content)); // Single line is not NDJSON
+    }
+
+    #[test]
+    fn test_is_ndjson_invalid_format() {
+        let content = r#"not json
+also not json"#;
+        assert!(!is_ndjson(content));
+    }
+
+    #[test]
+    fn test_is_ndjson_mixed_valid_invalid() {
+        let content = r#"{"key": "value"}
+not json
+{"another": "value"}"#;
+        assert!(!is_ndjson(content)); // All lines must be valid
+    }
+
+    #[test]
+    fn test_is_ndjson_empty_lines() {
+        let content = r#"{"key": "value1"}
+
+{"key": "value2"}
+
+{"key": "value3"}"#;
+        assert!(is_ndjson(content)); // Empty lines are filtered out
+    }
+
+    #[test]
+    fn test_is_ndjson_empty_string() {
+        let content = "";
+        assert!(!is_ndjson(content));
+    }
+
+    #[test]
+    fn test_detect_table_type_delta() {
+        let objects = vec![
+            FileMetadata {
+                path: "table/_delta_log/00000000000000000000.json".to_string(),
+                size: 1024,
+                last_modified: None,
+            },
+            FileMetadata {
+                path: "table/part-00000.parquet".to_string(),
+                size: 2048,
+                last_modified: None,
+            },
+        ];
+
+        assert_eq!(detect_table_type(&objects), "delta");
+    }
+
+    #[test]
+    fn test_detect_table_type_iceberg() {
+        let objects = vec![
+            FileMetadata {
+                path: "table/metadata/v1.metadata.json".to_string(),
+                size: 1024,
+                last_modified: None,
+            },
+            FileMetadata {
+                path: "table/data/file.parquet".to_string(),
+                size: 2048,
+                last_modified: None,
+            },
+        ];
+
+        assert_eq!(detect_table_type(&objects), "iceberg");
+    }
+
+    #[test]
+    fn test_detect_table_type_hudi() {
+        let objects = vec![
+            FileMetadata {
+                path: "table/.hoodie/hoodie.properties".to_string(),
+                size: 512,
+                last_modified: None,
+            },
+            FileMetadata {
+                path: "table/data/file.parquet".to_string(),
+                size: 2048,
+                last_modified: None,
+            },
+        ];
+
+        assert_eq!(detect_table_type(&objects), "hudi");
+    }
+
+    #[test]
+    fn test_detect_table_type_lance_versions() {
+        let objects = vec![
+            FileMetadata {
+                path: "table/_versions/1.manifest".to_string(),
+                size: 1024,
+                last_modified: None,
+            },
+            FileMetadata {
+                path: "table/data.lance".to_string(),
+                size: 2048,
+                last_modified: None,
+            },
+        ];
+
+        assert_eq!(detect_table_type(&objects), "lance");
+    }
+
+    #[test]
+    fn test_detect_table_type_lance_files() {
+        let objects = vec![
+            FileMetadata {
+                path: "table/data/file1.lance".to_string(),
+                size: 2048,
+                last_modified: None,
+            },
+            FileMetadata {
+                path: "table/data/file2.lance".to_string(),
+                size: 3072,
+                last_modified: None,
+            },
+        ];
+
+        assert_eq!(detect_table_type(&objects), "lance");
+    }
+
+    #[test]
+    fn test_detect_table_type_unknown() {
+        let objects = vec![
+            FileMetadata {
+                path: "table/data/file.parquet".to_string(),
+                size: 2048,
+                last_modified: None,
+            },
+            FileMetadata {
+                path: "table/data/file2.parquet".to_string(),
+                size: 3072,
+                last_modified: None,
+            },
+        ];
+
+        assert_eq!(detect_table_type(&objects), "unknown");
+    }
+
+    #[test]
+    fn test_detect_table_type_empty() {
+        let objects = vec![];
+        assert_eq!(detect_table_type(&objects), "unknown");
+    }
+
+    #[tokio::test]
+    async fn test_measure_dur_async_success() {
+        let mut metrics = LinkedList::new();
+
+        let result = measure_dur_async(
+            "test_operation",
+            &mut metrics,
+            || async { Ok::<i32, String>(42) },
+            None,
+        )
+        .await;
+
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), 42);
+        assert_eq!(metrics.len(), 1);
+
+        let (name, _start, _duration) = metrics.front().unwrap();
+        assert_eq!(*name, "test_operation");
+    }
+
+    #[tokio::test]
+    async fn test_measure_dur_async_with_trace_fn() {
+        let mut metrics = LinkedList::new();
+
+        fn trace_fn(value: &i32) -> String {
+            format!("result={}", value)
+        }
+
+        let result = measure_dur_async(
+            "test_operation",
+            &mut metrics,
+            || async { Ok::<i32, String>(100) },
+            Some(trace_fn),
+        )
+        .await;
+
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), 100);
+        assert_eq!(metrics.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn test_measure_dur_async_error() {
+        let mut metrics = LinkedList::new();
+
+        let result = measure_dur_async(
+            "test_operation",
+            &mut metrics,
+            || async { Err::<i32, String>("error occurred".to_string()) },
+            None,
+        )
+        .await;
+
+        assert!(result.is_err());
+        assert_eq!(result.unwrap_err(), "error occurred");
+        // Metrics should still be recorded even on error
+        assert_eq!(metrics.len(), 1);
+    }
+
+    #[test]
+    fn test_measure_dur_with_error_success() {
+        let mut metrics = LinkedList::new();
+
+        let result = measure_dur_with_error(
+            "test_operation",
+            &mut metrics,
+            || Ok::<i32, String>(42),
+            None,
+        );
+
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), 42);
+        assert_eq!(metrics.len(), 1);
+
+        let (name, _start, _duration) = metrics.front().unwrap();
+        assert_eq!(*name, "test_operation");
+    }
+
+    #[test]
+    fn test_measure_dur_with_error_with_trace_fn() {
+        let mut metrics = LinkedList::new();
+
+        fn trace_fn(value: &String) -> String {
+            format!("output={}", value)
+        }
+
+        let result = measure_dur_with_error(
+            "test_operation",
+            &mut metrics,
+            || Ok::<String, String>("success".to_string()),
+            Some(trace_fn),
+        );
+
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), "success");
+        assert_eq!(metrics.len(), 1);
+    }
+
+    #[test]
+    fn test_measure_dur_with_error_failure() {
+        let mut metrics = LinkedList::new();
+
+        let result = measure_dur_with_error(
+            "test_operation",
+            &mut metrics,
+            || Err::<i32, String>("error occurred".to_string()),
+            None,
+        );
+
+        assert!(result.is_err());
+        assert_eq!(result.unwrap_err(), "error occurred");
+        // Metrics should still be recorded even on error
+        assert_eq!(metrics.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn test_measure_dur_basic() {
+        let mut metrics = LinkedList::new();
+
+        let result = measure_dur("test_operation", &mut metrics, || 42, None).await;
+
+        assert_eq!(result, 42);
+        assert_eq!(metrics.len(), 1);
+
+        let (name, _start, _duration) = metrics.front().unwrap();
+        assert_eq!(*name, "test_operation");
+    }
+
+    #[tokio::test]
+    async fn test_measure_dur_with_trace_fn() {
+        let mut metrics = LinkedList::new();
+
+        fn trace_fn(value: i32) -> String {
+            format!("computed={}", value)
+        }
+
+        let result = measure_dur("test_operation", &mut metrics, || 100, Some(trace_fn)).await;
+
+        assert_eq!(result, 100);
+        assert_eq!(metrics.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn test_measure_dur_multiple_operations() {
+        let mut metrics = LinkedList::new();
+
+        let _result1 = measure_dur("operation1", &mut metrics, || 10, None).await;
+        let _result2 = measure_dur("operation2", &mut metrics, || 20, None).await;
+        let _result3 = measure_dur("operation3", &mut metrics, || 30, None).await;
+
+        assert_eq!(metrics.len(), 3);
+
+        let names: Vec<&str> = metrics.iter().map(|(name, _, _)| *name).collect();
+        assert_eq!(names, vec!["operation1", "operation2", "operation3"]);
+    }
+
+    #[test]
+    fn test_measure_dur_with_error_multiple_operations() {
+        let mut metrics = LinkedList::new();
+
+        let _result1 = measure_dur_with_error("op1", &mut metrics, || Ok::<i32, String>(1), None);
+        let _result2 = measure_dur_with_error("op2", &mut metrics, || Ok::<i32, String>(2), None);
+        let _result3 = measure_dur_with_error(
+            "op3",
+            &mut metrics,
+            || Err::<i32, String>("err".to_string()),
+            None,
+        );
+
+        assert_eq!(metrics.len(), 3);
+
+        let names: Vec<&str> = metrics.iter().map(|(name, _, _)| *name).collect();
+        assert_eq!(names, vec!["op1", "op2", "op3"]);
+    }
+
+    #[tokio::test]
+    async fn test_measure_dur_async_multiple_operations() {
+        let mut metrics = LinkedList::new();
+
+        let _result1 = measure_dur_async(
+            "async_op1",
+            &mut metrics,
+            || async { Ok::<i32, String>(1) },
+            None,
+        )
+        .await;
+        let _result2 = measure_dur_async(
+            "async_op2",
+            &mut metrics,
+            || async { Ok::<i32, String>(2) },
+            None,
+        )
+        .await;
+
+        assert_eq!(metrics.len(), 2);
+
+        let names: Vec<&str> = metrics.iter().map(|(name, _, _)| *name).collect();
+        assert_eq!(names, vec!["async_op1", "async_op2"]);
+    }
+
+    #[tokio::test]
+    async fn test_measure_dur_timing() {
+        let mut metrics = LinkedList::new();
+
+        let result = measure_dur(
+            "sleep_operation",
+            &mut metrics,
+            || {
+                std::thread::sleep(std::time::Duration::from_millis(10));
+                42
+            },
+            None,
+        )
+        .await;
+
+        assert_eq!(result, 42);
+        assert_eq!(metrics.len(), 1);
+
+        let (_name, _start, duration) = metrics.front().unwrap();
+        // Should have taken at least 10ms
+        assert!(duration.as_millis() >= 5); // Allow some tolerance
+    }
+}
