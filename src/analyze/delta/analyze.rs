@@ -425,6 +425,35 @@ impl DeltaAnalyzer {
                 }
             }
 
+            // Extract Z-Order information from OPTIMIZE operations
+            if let Some(commit_info) = entry.get("commitInfo") {
+                if let Some(operation) = commit_info.get("operation") {
+                    if operation.as_str().map(|s| s.trim().to_lowercase())
+                        == Some("OPTIMIZE".to_string())
+                    {
+                        if let Some(operation_params) = commit_info.get("operationParameters") {
+                            if let Some(z_order_by) = operation_params.get("zOrderBy") {
+                                // zOrderBy is a JSON array string like "[\"department\"]"
+                                if let Some(z_order_str) = z_order_by.as_str() {
+                                    // Parse the JSON array string
+                                    if let Ok(z_order_array) =
+                                        serde_json::from_str::<Vec<String>>(z_order_str)
+                                    {
+                                        if !z_order_array.is_empty() {
+                                            result.z_order_opportunity = true;
+                                            result.z_order_columns = z_order_array.clone();
+                                            if result.clustering_columns.is_empty() {
+                                                result.clustering_columns = z_order_array;
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
             // Extract deletion vector metrics
             self.extract_deletion_vectors(&entry, &mut result);
 
@@ -593,7 +622,7 @@ impl DeltaAnalyzer {
 
     /// Extract deletion vector metrics from a Delta log entry.
     ///
-    /// Analyzes "remove" actions in the transaction log to identify deletion vectors,
+    /// Analyzes "add" and "remove" actions in the transaction log to identify deletion vectors,
     /// which are used in Delta Lake to mark rows as deleted without rewriting files.
     /// Extracts count, size, deleted row count, and age information.
     ///
@@ -602,9 +631,11 @@ impl DeltaAnalyzer {
     /// * `entry` - The Delta log entry to process
     /// * `result` - The result object to update (mutated in place)
     fn extract_deletion_vectors(&self, entry: &Value, result: &mut MetadataProcessingResult) {
-        if let Some(remove_actions) = entry.get("remove") {
-            if let Some(remove_array) = remove_actions.as_object() {
-                if let Some(deletion_vector) = remove_array.get("deletionVector") {
+        // Deletion vectors can be stored in both 'add' and 'remove' actions
+        // Check 'add' actions first
+        if let Some(add_action) = entry.get("add") {
+            if let Some(add_object) = add_action.as_object() {
+                if let Some(deletion_vector) = add_object.get("deletionVector") {
                     result.deletion_vector_count += 1;
 
                     if let Some(size) = deletion_vector.get("sizeInBytes") {
@@ -614,9 +645,40 @@ impl DeltaAnalyzer {
                     if let Some(rows) = deletion_vector.get("cardinality") {
                         result.deleted_rows += rows.as_u64().unwrap_or(0);
                     }
-                    // TODO: Check if it's `timestamp` or `deletionTimestamp`
-                    if let Some(timestamp) = remove_array.get("timestamp") {
-                        let creation_time = timestamp.as_u64().unwrap_or(0) as i64;
+
+                    // Calculate age based on modification time of the add action
+                    if let Some(mod_time) = add_object.get("modificationTime") {
+                        let creation_time = mod_time.as_u64().unwrap_or(0) as i64;
+                        let age_days = (chrono::Utc::now().timestamp() - creation_time / 1000)
+                            as f64
+                            / 86400.0;
+                        result.oldest_dv_age = result.oldest_dv_age.max(age_days);
+                    }
+                }
+            }
+        }
+
+        // Also check 'remove' actions for deletion vectors
+        if let Some(remove_action) = entry.get("remove") {
+            if let Some(remove_object) = remove_action.as_object() {
+                if let Some(deletion_vector) = remove_object.get("deletionVector") {
+                    result.deletion_vector_count += 1;
+
+                    if let Some(size) = deletion_vector.get("sizeInBytes") {
+                        result.deletion_vector_total_size += size.as_u64().unwrap_or(0);
+                    }
+
+                    if let Some(rows) = deletion_vector.get("cardinality") {
+                        result.deleted_rows += rows.as_u64().unwrap_or(0);
+                    }
+
+                    // Calculate age based on deletion timestamp or modification time
+                    let timestamp = remove_object
+                        .get("deletionTimestamp")
+                        .or_else(|| remove_object.get("timestamp"));
+
+                    if let Some(ts) = timestamp {
+                        let creation_time = ts.as_u64().unwrap_or(0) as i64;
                         let age_days = (chrono::Utc::now().timestamp() - creation_time / 1000)
                             as f64
                             / 86400.0;

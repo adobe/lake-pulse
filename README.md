@@ -124,5 +124,5 @@ For detailed information on configuration options, refer to the `object_store` c
 
 ## License
 
-See LICENSE file for details.
+See LICENSE files for details.
 

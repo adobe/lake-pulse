@@ -26,7 +26,7 @@ pub enum StorageType {
 ///
 /// ## Local filesystem
 /// ```
-/// use lake_health::storage::StorageConfig;
+/// use lake_pulse::storage::StorageConfig;
 ///
 /// let config = StorageConfig::local()
 ///     .with_option("path", "/tmp/data");
@@ -34,7 +34,7 @@ pub enum StorageType {
 ///
 /// ## AWS S3
 /// ```
-/// use lake_health::storage::StorageConfig;
+/// use lake_pulse::storage::StorageConfig;
 ///
 /// let config = StorageConfig::new("s3")
 ///     .with_option("bucket", "my-bucket")
@@ -45,7 +45,7 @@ pub enum StorageType {
 ///
 /// ## Azure
 /// ```
-/// use lake_health::storage::StorageConfig;
+/// use lake_pulse::storage::StorageConfig;
 ///
 /// let config = StorageConfig::new("azure")
 ///     .with_option("container", "mycontainer")
@@ -55,7 +55,7 @@ pub enum StorageType {
 ///
 /// ## GCS
 /// ```
-/// use lake_health::storage::StorageConfig;
+/// use lake_pulse::storage::StorageConfig;
 ///
 /// let config = StorageConfig::new("gcs")
 ///     .with_option("bucket", "my-bucket")

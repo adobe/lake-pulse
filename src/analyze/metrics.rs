@@ -425,7 +425,7 @@ impl Display for HealthReport {
         writeln!(
             f,
             " {:<19} {:>8}              {:<19} {:>8}  {:>5.1}%",
-            "Total Files",
+            "Total Data Files",
             format!("{}", report.metrics.total_files),
             "Small (<16MB)",
             dist.small_files,
@@ -438,7 +438,7 @@ impl Display for HealthReport {
         writeln!(
             f,
             " {:<19} {:>8}              {:<19} {:>8}  {:>5.1}%",
-            "Total Size",
+            "Total Data Size",
             size_str,
             "Medium (16-128MB)",
             dist.medium_files,
@@ -686,8 +686,11 @@ impl Display for HealthReport {
                         match i {
                             0 => format!(
                                 " {:<19} {:>8}",
-                                "Columns",
-                                clustering.clustering_columns.join(", ")
+                                "Avg Cluster Size",
+                                format!(
+                                    "{:.2} MB",
+                                    clustering.avg_cluster_size_bytes / (1024.0 * 1024.0)
+                                )
                             ),
                             1 => format!(
                                 " {:<19} {:>8}",
@@ -699,14 +702,19 @@ impl Display for HealthReport {
                                 "Avg Files/Cluster",
                                 format!("{:.2}", clustering.avg_files_per_cluster)
                             ),
-                            3 => format!(
-                                " {:<19} {:>8}",
-                                "Avg Cluster Size",
-                                format!(
-                                    "{:.2} MB",
-                                    clustering.avg_cluster_size_bytes / (1024.0 * 1024.0)
-                                )
-                            ),
+                            3 => clustering
+                                .clustering_columns
+                                .iter()
+                                .enumerate()
+                                .map(|(i, v)| {
+                                    if i == 0 {
+                                        format!(" {:<14} {:>13}", "Columns", v)
+                                    } else {
+                                        format!(" {:<14} {:>13}", "", v)
+                                    }
+                                })
+                                .collect::<Vec<_>>()
+                                .join("\n"),
                             _ => format!("{:<40}", ""),
                         }
                     } else {
@@ -741,13 +749,13 @@ impl Display for HealthReport {
                         ),
                         3 => format!(
                             " {:<19} {:>8}",
-                            "Oldest DV Age",
-                            format!("{:.1} days", dv_metrics.deletion_vector_age_days)
+                            "Oldest Age (days)",
+                            format!("{:.1}", dv_metrics.deletion_vector_age_days)
                         ),
                         4 => format!(
                             " {:<19} {:>8}",
-                            "Impact",
-                            format!("{:.2} (0-1)", dv_metrics.deletion_vector_impact_score)
+                            "Impact (0-1)",
+                            format!("{:.2}", dv_metrics.deletion_vector_impact_score)
                         ),
                         _ => format!("{:<40}", ""),
                     }
@@ -868,7 +876,7 @@ impl Display for HealthReport {
                         6 => format!(
                             " {:<19} {:>8}",
                             "Recommended (days)",
-                            format!("{} days", tt_metrics.recommended_retention_days)
+                            format!("{}", tt_metrics.recommended_retention_days)
                         ),
                         _ => format!("{:<40}", ""),
                     }
@@ -953,7 +961,7 @@ impl Display for HealthReport {
                             "Coverage (0-1)",
                             format!("{:.2}", constraint_metrics.constraint_coverage_score)
                         ),
-                        _ => format!("{:<40}", ""),
+                        _ => format!("{:<29}", ""),
                     }
                 } else {
                     format!("{:<40}", "")
@@ -1017,11 +1025,26 @@ impl Display for HealthReport {
                         ),
                         8 => {
                             if !compaction_metrics.z_order_columns.is_empty() {
-                                format!(
-                                    " {:<19} {:>8}",
-                                    "Z-Columns",
-                                    compaction_metrics.z_order_columns.join(", ")
-                                )
+                                let print_rows = compaction_metrics
+                                    .z_order_columns
+                                    .iter()
+                                    .enumerate()
+                                    .map(|(i, v)| {
+                                        if i == 0 {
+                                            format!(" {:<14} {:>13}", "Z-Columns", v)
+                                        } else {
+                                            format!(" {:<14} {:>13}", "", v)
+                                        }
+                                    })
+                                    .collect::<Vec<_>>();
+
+                                print_rows.join("\n")
+
+                                // format!(
+                                //     " {:<19} {:>8}",
+                                //     "Z-Columns",
+                                //     compaction_metrics.z_order_columns.join(", ")
+                                // )
                             } else {
                                 format!("{:<40}", "")
                             }
@@ -2606,7 +2629,7 @@ mod tests {
         assert!(display.contains("85.0%"));
         assert!(display.contains("/path/to/table"));
         assert!(display.contains("delta"));
-        assert!(display.contains("Total Files"));
+        assert!(display.contains("Total Data Files"));
         assert!(display.contains("100"));
     }
 
