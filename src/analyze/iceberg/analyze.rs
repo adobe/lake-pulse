@@ -1370,3 +1370,558 @@ impl TableAnalyzer for IcebergAnalyzer {
         .await
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::storage::error::StorageResult;
+    use serde_json::json;
+    use std::collections::HashMap;
+    use std::sync::OnceLock;
+
+    // Mock storage provider for testing
+    struct MockStorageProvider {
+        options: OnceLock<HashMap<String, String>>,
+    }
+
+    impl MockStorageProvider {
+        fn new() -> Self {
+            Self {
+                options: OnceLock::new(),
+            }
+        }
+    }
+
+    #[async_trait]
+    impl StorageProvider for MockStorageProvider {
+        fn base_path(&self) -> &str {
+            "/mock/base/path"
+        }
+
+        async fn validate_connection(&self, _path: &str) -> StorageResult<()> {
+            Ok(())
+        }
+
+        async fn list_files(
+            &self,
+            _path: &str,
+            _recursive: bool,
+        ) -> StorageResult<Vec<FileMetadata>> {
+            Ok(vec![])
+        }
+
+        async fn discover_partitions(
+            &self,
+            _path: &str,
+            _exclude_prefixes: Vec<&str>,
+        ) -> StorageResult<Vec<String>> {
+            Ok(vec![])
+        }
+
+        async fn list_files_parallel(
+            &self,
+            _path: &str,
+            _partitions: Vec<String>,
+            _parallelism: usize,
+        ) -> StorageResult<Vec<FileMetadata>> {
+            Ok(vec![])
+        }
+
+        async fn read_file(&self, _path: &str) -> StorageResult<Vec<u8>> {
+            Ok(vec![])
+        }
+
+        async fn exists(&self, _path: &str) -> StorageResult<bool> {
+            Ok(true)
+        }
+
+        async fn get_metadata(&self, _path: &str) -> StorageResult<FileMetadata> {
+            Ok(FileMetadata {
+                path: "test".to_string(),
+                size: 0,
+                last_modified: None,
+            })
+        }
+
+        fn options(&self) -> &HashMap<String, String> {
+            self.options.get_or_init(|| HashMap::new())
+        }
+
+        fn clean_options(&self) -> HashMap<String, String> {
+            HashMap::new()
+        }
+
+        fn uri_from_path(&self, path: &str) -> String {
+            path.to_string()
+        }
+    }
+
+    // Helper function to create a test IcebergAnalyzer
+    fn create_test_analyzer() -> IcebergAnalyzer {
+        let mock_storage = Arc::new(MockStorageProvider::new());
+        IcebergAnalyzer::new(mock_storage, 4)
+    }
+
+    #[test]
+    fn test_iceberg_analyzer_new() {
+        let mock_storage = Arc::new(MockStorageProvider::new());
+        let analyzer = IcebergAnalyzer::new(mock_storage, 8);
+
+        assert_eq!(analyzer.parallelism, 8);
+    }
+
+    #[test]
+    fn test_categorize_iceberg_files_data_only() {
+        let analyzer = create_test_analyzer();
+        let files = vec![
+            FileMetadata {
+                path: "table/data/part-00000.parquet".to_string(),
+                size: 1024,
+                last_modified: None,
+            },
+            FileMetadata {
+                path: "table/data/part-00001.parquet".to_string(),
+                size: 2048,
+                last_modified: None,
+            },
+        ];
+
+        let (data_files, metadata_files) = analyzer.categorize_iceberg_files(files);
+
+        assert_eq!(data_files.len(), 2);
+        assert_eq!(metadata_files.len(), 0);
+    }
+
+    #[test]
+    fn test_categorize_iceberg_files_metadata_only() {
+        let analyzer = create_test_analyzer();
+        let files = vec![FileMetadata {
+            path: "table/metadata/v1.metadata.json".to_string(),
+            size: 512,
+            last_modified: None,
+        }];
+
+        let (data_files, metadata_files) = analyzer.categorize_iceberg_files(files);
+
+        assert_eq!(data_files.len(), 0);
+        assert_eq!(metadata_files.len(), 1);
+    }
+
+    #[test]
+    fn test_categorize_iceberg_files_mixed() {
+        let analyzer = create_test_analyzer();
+        let files = vec![
+            FileMetadata {
+                path: "table/data/part-00000.parquet".to_string(),
+                size: 1024,
+                last_modified: None,
+            },
+            FileMetadata {
+                path: "table/metadata/v1.metadata.json".to_string(),
+                size: 512,
+                last_modified: None,
+            },
+            FileMetadata {
+                path: "table/data/part-00001.parquet".to_string(),
+                size: 2048,
+                last_modified: None,
+            },
+            FileMetadata {
+                path: "table/metadata/manifest-list.avro".to_string(),
+                size: 256,
+                last_modified: None,
+            },
+        ];
+
+        let (data_files, metadata_files) = analyzer.categorize_iceberg_files(files);
+
+        assert_eq!(data_files.len(), 2);
+        assert_eq!(metadata_files.len(), 2);
+    }
+
+    #[test]
+    fn test_categorize_iceberg_files_empty() {
+        let analyzer = create_test_analyzer();
+        let files = vec![];
+
+        let (data_files, metadata_files) = analyzer.categorize_iceberg_files(files);
+
+        assert_eq!(data_files.len(), 0);
+        assert_eq!(metadata_files.len(), 0);
+    }
+
+    #[test]
+    fn test_categorize_iceberg_files_non_parquet() {
+        let analyzer = create_test_analyzer();
+        let files = vec![
+            FileMetadata {
+                path: "table/data.csv".to_string(),
+                size: 1024,
+                last_modified: None,
+            },
+            FileMetadata {
+                path: "table/README.md".to_string(),
+                size: 512,
+                last_modified: None,
+            },
+        ];
+
+        let (data_files, metadata_files) = analyzer.categorize_iceberg_files(files);
+
+        // Non-parquet, non-metadata files should be ignored
+        assert_eq!(data_files.len(), 0);
+        assert_eq!(metadata_files.len(), 0);
+    }
+
+    #[test]
+    fn test_categorize_iceberg_files_manifest_files() {
+        let analyzer = create_test_analyzer();
+        let files = vec![FileMetadata {
+            path: "table/metadata/manifest-list.avro".to_string(),
+            size: 256,
+            last_modified: None,
+        }];
+
+        let (data_files, metadata_files) = analyzer.categorize_iceberg_files(files);
+
+        assert_eq!(data_files.len(), 0);
+        assert_eq!(metadata_files.len(), 1);
+        assert!(metadata_files.iter().all(|f| f.path.contains("manifest")));
+    }
+
+    #[test]
+    fn test_schema_change_creation() {
+        let schema = json!({
+            "type": "struct",
+            "fields": [
+                {"name": "id", "type": "long", "required": true}
+            ]
+        });
+
+        let change = SchemaChange {
+            version: 1,
+            timestamp: 1234567890,
+            schema: schema.clone(),
+            is_breaking: false,
+        };
+
+        assert_eq!(change.version, 1);
+        assert_eq!(change.timestamp, 1234567890);
+        assert!(!change.is_breaking);
+        assert_eq!(change.schema, schema);
+    }
+
+    #[test]
+    fn test_schema_change_clone() {
+        let schema = json!({"type": "struct", "fields": []});
+        let change = SchemaChange {
+            version: 1,
+            timestamp: 1234567890,
+            schema: schema.clone(),
+            is_breaking: true,
+        };
+
+        let cloned = change.clone();
+        assert_eq!(change.version, cloned.version);
+        assert_eq!(change.timestamp, cloned.timestamp);
+        assert_eq!(change.is_breaking, cloned.is_breaking);
+    }
+
+    #[test]
+    fn test_schema_change_debug() {
+        let schema = json!({"type": "struct"});
+        let change = SchemaChange {
+            version: 1,
+            timestamp: 1234567890,
+            schema,
+            is_breaking: false,
+        };
+
+        let debug_str = format!("{:?}", change);
+        assert!(!debug_str.is_empty());
+        assert!(debug_str.contains("SchemaChange"));
+    }
+
+    #[test]
+    fn test_metadata_processing_result_default() {
+        let result = MetadataProcessingResult::default();
+
+        assert_eq!(result.partition_columns.len(), 0);
+        assert_eq!(result.total_snapshots, 0);
+        assert_eq!(result.total_historical_size, 0);
+        assert_eq!(result.oldest_timestamp, 0);
+        assert_eq!(result.newest_timestamp, 0);
+        assert_eq!(result.total_constraints, 0);
+        assert_eq!(result.check_constraints, 0);
+        assert_eq!(result.not_null_constraints, 0);
+        assert_eq!(result.unique_constraints, 0);
+        assert_eq!(result.foreign_key_constraints, 0);
+        assert_eq!(result.sort_order_columns.len(), 0);
+        assert_eq!(result.schema_changes.len(), 0);
+        assert_eq!(result.delete_files_count, 0);
+        assert_eq!(result.delete_files_size, 0);
+    }
+
+    #[test]
+    fn test_detect_breaking_schema_changes_field_removed() {
+        let analyzer = create_test_analyzer();
+
+        let old_schema = json!({
+            "fields": [
+                {"name": "id", "type": "long"},
+                {"name": "name", "type": "string"}
+            ]
+        });
+
+        let new_schema = json!({
+            "fields": [
+                {"name": "id", "type": "long"}
+            ]
+        });
+
+        let is_breaking = analyzer.detect_breaking_schema_changes(&old_schema, &new_schema);
+        assert!(is_breaking, "Removing a field should be a breaking change");
+    }
+
+    #[test]
+    fn test_detect_breaking_schema_changes_type_changed() {
+        let analyzer = create_test_analyzer();
+
+        let old_schema = json!({
+            "fields": [
+                {"name": "id", "type": "long"}
+            ]
+        });
+
+        let new_schema = json!({
+            "fields": [
+                {"name": "id", "type": "string"}
+            ]
+        });
+
+        let is_breaking = analyzer.detect_breaking_schema_changes(&old_schema, &new_schema);
+        assert!(
+            is_breaking,
+            "Changing field type should be a breaking change"
+        );
+    }
+
+    #[test]
+    fn test_detect_breaking_schema_changes_nullable_changed() {
+        let analyzer = create_test_analyzer();
+
+        let old_schema = json!({
+            "fields": [
+                {"name": "id", "type": "long", "required": false}
+            ]
+        });
+
+        let new_schema = json!({
+            "fields": [
+                {"name": "id", "type": "long", "required": true}
+            ]
+        });
+
+        let is_breaking = analyzer.detect_breaking_schema_changes(&old_schema, &new_schema);
+        assert!(
+            is_breaking,
+            "Making a field required should be a breaking change"
+        );
+    }
+
+    #[test]
+    fn test_detect_breaking_schema_changes_field_added() {
+        let analyzer = create_test_analyzer();
+
+        let old_schema = json!({
+            "fields": [
+                {"name": "id", "type": "long"}
+            ]
+        });
+
+        let new_schema = json!({
+            "fields": [
+                {"name": "id", "type": "long"},
+                {"name": "name", "type": "string"}
+            ]
+        });
+
+        let is_breaking = analyzer.detect_breaking_schema_changes(&old_schema, &new_schema);
+        assert!(
+            !is_breaking,
+            "Adding a field should not be a breaking change"
+        );
+    }
+
+    #[test]
+    fn test_detect_breaking_schema_changes_no_change() {
+        let analyzer = create_test_analyzer();
+
+        let old_schema = json!({
+            "fields": [
+                {"name": "id", "type": "long"}
+            ]
+        });
+
+        let new_schema = json!({
+            "fields": [
+                {"name": "id", "type": "long"}
+            ]
+        });
+
+        let is_breaking = analyzer.detect_breaking_schema_changes(&old_schema, &new_schema);
+        assert!(!is_breaking, "No change should not be breaking");
+    }
+
+    #[test]
+    fn test_is_breaking_change_no_previous() {
+        let analyzer = create_test_analyzer();
+        let new_schema = json!({"fields": []});
+
+        let is_breaking = analyzer.is_breaking_change(&[], &new_schema);
+        assert!(!is_breaking, "First schema should not be breaking");
+    }
+
+    #[test]
+    fn test_is_breaking_change_with_previous() {
+        let analyzer = create_test_analyzer();
+
+        let previous_changes = vec![SchemaChange {
+            version: 1,
+            timestamp: 1234567890,
+            schema: json!({
+                "fields": [
+                    {"name": "id", "type": "long"},
+                    {"name": "name", "type": "string"}
+                ]
+            }),
+            is_breaking: false,
+        }];
+
+        let new_schema = json!({
+            "fields": [
+                {"name": "id", "type": "long"}
+            ]
+        });
+
+        let is_breaking = analyzer.is_breaking_change(&previous_changes, &new_schema);
+        assert!(is_breaking, "Removing a field should be breaking");
+    }
+
+    #[test]
+    fn test_calculate_schema_stability_score_perfect() {
+        let analyzer = create_test_analyzer();
+
+        let score = analyzer.calculate_schema_stability_score(0, 0, 0.0, 100.0);
+
+        assert!(score >= 0.9, "Perfect stability should have high score");
+        assert!(score <= 1.0);
+    }
+
+    #[test]
+    fn test_calculate_schema_stability_score_moderate() {
+        let analyzer = create_test_analyzer();
+
+        let score = analyzer.calculate_schema_stability_score(15, 2, 0.2, 10.0);
+
+        assert!(score >= 0.0);
+        assert!(score <= 1.0);
+    }
+
+    #[test]
+    fn test_calculate_schema_stability_score_unstable() {
+        let analyzer = create_test_analyzer();
+
+        let score = analyzer.calculate_schema_stability_score(100, 20, 2.0, 1.0);
+
+        assert!(score >= 0.0);
+        assert!(score < 0.5, "Unstable schema should have low score");
+    }
+
+    #[test]
+    fn test_calculate_schema_stability_score_clamped() {
+        let analyzer = create_test_analyzer();
+
+        // Extreme values that would result in negative score
+        let score = analyzer.calculate_schema_stability_score(1000, 100, 10.0, 0.1);
+
+        assert!(score >= 0.0, "Score should be clamped to 0.0");
+        assert!(score <= 1.0, "Score should be clamped to 1.0");
+    }
+
+    #[test]
+    fn test_calculate_storage_cost_impact_zero() {
+        let analyzer = create_test_analyzer();
+
+        let impact = analyzer.calculate_storage_cost_impact(0, 0, 0.0);
+
+        assert_eq!(impact, 0.0);
+    }
+
+    #[test]
+    fn test_calculate_storage_cost_impact_low() {
+        let analyzer = create_test_analyzer();
+
+        // 2GB, 50 snapshots, 10 days old
+        let impact = analyzer.calculate_storage_cost_impact(2 * 1024 * 1024 * 1024, 50, 10.0);
+
+        assert!(impact >= 0.1, "Should have some impact from size");
+        assert!(impact < 0.5);
+    }
+
+    #[test]
+    fn test_calculate_storage_cost_impact_high() {
+        let analyzer = create_test_analyzer();
+
+        // 200GB, 2000 snapshots, 400 days old
+        let impact = analyzer.calculate_storage_cost_impact(200 * 1024 * 1024 * 1024, 2000, 400.0);
+
+        assert!(impact > 0.5);
+        assert!(impact <= 1.0);
+    }
+
+    #[test]
+    fn test_calculate_retention_efficiency_perfect() {
+        let analyzer = create_test_analyzer();
+
+        // Low snapshot count, reasonable retention
+        let efficiency = analyzer.calculate_retention_efficiency(30, 30.0, 0.0);
+
+        assert!(efficiency >= 0.8);
+        assert!(efficiency <= 1.0);
+    }
+
+    #[test]
+    fn test_calculate_retention_efficiency_poor() {
+        let analyzer = create_test_analyzer();
+
+        // Too many snapshots, too long retention
+        let efficiency = analyzer.calculate_retention_efficiency(2000, 500.0, 0.0);
+
+        assert!(efficiency < 0.5);
+    }
+
+    #[test]
+    fn test_calculate_recommended_retention_few_snapshots() {
+        let analyzer = create_test_analyzer();
+
+        let retention = analyzer.calculate_recommended_retention(50, 20.0);
+
+        assert_eq!(
+            retention, 180,
+            "Few snapshots should recommend longer retention"
+        );
+    }
+
+    #[test]
+    fn test_calculate_recommended_retention_many_snapshots() {
+        let analyzer = create_test_analyzer();
+
+        let retention = analyzer.calculate_recommended_retention(1500, 400.0);
+
+        assert_eq!(
+            retention, 30,
+            "Many snapshots should recommend shorter retention"
+        );
+    }
+}

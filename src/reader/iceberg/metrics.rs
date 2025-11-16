@@ -317,3 +317,322 @@ impl Default for IcebergMetrics {
         Self::new()
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_iceberg_metrics_new() {
+        let metrics = IcebergMetrics::new();
+
+        assert_eq!(metrics.current_snapshot_id, None);
+        assert_eq!(metrics.format_version, 1);
+        assert_eq!(metrics.table_uuid, "");
+        assert_eq!(metrics.metadata.location, "");
+        assert_eq!(metrics.table_properties.len(), 0);
+        assert_eq!(metrics.snapshot_info.total_snapshots, 0);
+        assert_eq!(metrics.schema_info.field_count, 0);
+        assert_eq!(metrics.partition_spec.partition_field_count, 0);
+        assert_eq!(metrics.sort_order.sort_field_count, 0);
+        assert_eq!(metrics.file_stats.num_data_files, 0);
+        assert_eq!(metrics.manifest_stats.num_manifest_files, 0);
+    }
+
+    #[test]
+    fn test_iceberg_metrics_default() {
+        let metrics = IcebergMetrics::default();
+
+        assert_eq!(metrics.current_snapshot_id, None);
+        assert_eq!(metrics.format_version, 1);
+        assert_eq!(metrics.table_uuid, "");
+    }
+
+    #[test]
+    fn test_table_metadata_structure() {
+        let metadata = TableMetadata {
+            location: "/path/to/table".to_string(),
+            last_updated_ms: Some(1234567890),
+            last_column_id: 10,
+            current_schema_id: 1,
+            schema_count: 2,
+            default_spec_id: 0,
+            partition_spec_count: 1,
+            default_sort_order_id: 0,
+            sort_order_count: 1,
+            last_sequence_number: Some(5),
+        };
+
+        assert_eq!(metadata.location, "/path/to/table");
+        assert_eq!(metadata.last_updated_ms, Some(1234567890));
+        assert_eq!(metadata.last_column_id, 10);
+        assert_eq!(metadata.current_schema_id, 1);
+        assert_eq!(metadata.schema_count, 2);
+    }
+
+    #[test]
+    fn test_snapshot_metrics_structure() {
+        let mut summary = HashMap::new();
+        summary.insert("total-records".to_string(), "1000".to_string());
+
+        let snapshot = SnapshotMetrics {
+            total_snapshots: 5,
+            current_snapshot_id: Some(123),
+            current_snapshot_timestamp_ms: Some(1234567890),
+            parent_snapshot_id: Some(122),
+            operation: Some("append".to_string()),
+            summary,
+            manifest_list: Some("/path/to/manifest".to_string()),
+            schema_id: Some(1),
+            sequence_number: Some(10),
+        };
+
+        assert_eq!(snapshot.total_snapshots, 5);
+        assert_eq!(snapshot.current_snapshot_id, Some(123));
+        assert_eq!(snapshot.parent_snapshot_id, Some(122));
+        assert_eq!(snapshot.operation, Some("append".to_string()));
+        assert_eq!(
+            snapshot.summary.get("total-records"),
+            Some(&"1000".to_string())
+        );
+    }
+
+    #[test]
+    fn test_schema_metrics_structure() {
+        let schema = SchemaMetrics {
+            schema_id: 1,
+            field_count: 5,
+            schema_string: "{}".to_string(),
+            field_names: vec!["id".to_string(), "name".to_string()],
+            nested_field_count: 1,
+            required_field_count: 3,
+            optional_field_count: 2,
+        };
+
+        assert_eq!(schema.schema_id, 1);
+        assert_eq!(schema.field_count, 5);
+        assert_eq!(schema.field_names.len(), 2);
+        assert_eq!(schema.required_field_count + schema.optional_field_count, 5);
+    }
+
+    #[test]
+    fn test_partition_spec_metrics_structure() {
+        let partition_spec = PartitionSpecMetrics {
+            spec_id: 0,
+            partition_field_count: 2,
+            partition_fields: vec!["year".to_string(), "month".to_string()],
+            partition_transforms: vec!["year".to_string(), "month".to_string()],
+            is_partitioned: true,
+            estimated_partition_count: Some(100),
+        };
+
+        assert_eq!(partition_spec.spec_id, 0);
+        assert_eq!(partition_spec.partition_field_count, 2);
+        assert_eq!(partition_spec.partition_fields.len(), 2);
+        assert_eq!(partition_spec.partition_transforms.len(), 2);
+        assert!(partition_spec.is_partitioned);
+    }
+
+    #[test]
+    fn test_partition_spec_unpartitioned() {
+        let partition_spec = PartitionSpecMetrics {
+            spec_id: 0,
+            partition_field_count: 0,
+            partition_fields: vec![],
+            partition_transforms: vec![],
+            is_partitioned: false,
+            estimated_partition_count: None,
+        };
+
+        assert_eq!(partition_spec.partition_field_count, 0);
+        assert!(!partition_spec.is_partitioned);
+        assert_eq!(partition_spec.partition_fields.len(), 0);
+    }
+
+    #[test]
+    fn test_sort_order_metrics_structure() {
+        let sort_order = SortOrderMetrics {
+            order_id: 1,
+            sort_field_count: 2,
+            sort_fields: vec!["1".to_string(), "2".to_string()],
+            sort_directions: vec!["asc".to_string(), "desc".to_string()],
+            null_orders: vec!["nulls-first".to_string(), "nulls-last".to_string()],
+            is_sorted: true,
+        };
+
+        assert_eq!(sort_order.order_id, 1);
+        assert_eq!(sort_order.sort_field_count, 2);
+        assert_eq!(sort_order.sort_fields.len(), 2);
+        assert_eq!(sort_order.sort_directions.len(), 2);
+        assert_eq!(sort_order.null_orders.len(), 2);
+        assert!(sort_order.is_sorted);
+    }
+
+    #[test]
+    fn test_sort_order_unsorted() {
+        let sort_order = SortOrderMetrics {
+            order_id: 0,
+            sort_field_count: 0,
+            sort_fields: vec![],
+            sort_directions: vec![],
+            null_orders: vec![],
+            is_sorted: false,
+        };
+
+        assert_eq!(sort_order.sort_field_count, 0);
+        assert!(!sort_order.is_sorted);
+    }
+
+    #[test]
+    fn test_file_statistics_structure() {
+        let file_stats = FileStatistics {
+            num_data_files: 10,
+            total_data_size_bytes: 1000000,
+            avg_data_file_size_bytes: 100000.0,
+            min_data_file_size_bytes: 50000,
+            max_data_file_size_bytes: 150000,
+            total_records: Some(10000),
+            num_delete_files: 2,
+            total_delete_size_bytes: 20000,
+            num_position_delete_files: 1,
+            num_equality_delete_files: 1,
+        };
+
+        assert_eq!(file_stats.num_data_files, 10);
+        assert_eq!(file_stats.total_data_size_bytes, 1000000);
+        assert_eq!(file_stats.avg_data_file_size_bytes, 100000.0);
+        assert_eq!(file_stats.total_records, Some(10000));
+        assert_eq!(
+            file_stats.num_delete_files,
+            file_stats.num_position_delete_files + file_stats.num_equality_delete_files
+        );
+    }
+
+    #[test]
+    fn test_file_statistics_empty() {
+        let file_stats = FileStatistics {
+            num_data_files: 0,
+            total_data_size_bytes: 0,
+            avg_data_file_size_bytes: 0.0,
+            min_data_file_size_bytes: 0,
+            max_data_file_size_bytes: 0,
+            total_records: None,
+            num_delete_files: 0,
+            total_delete_size_bytes: 0,
+            num_position_delete_files: 0,
+            num_equality_delete_files: 0,
+        };
+
+        assert_eq!(file_stats.num_data_files, 0);
+        assert_eq!(file_stats.total_data_size_bytes, 0);
+        assert_eq!(file_stats.avg_data_file_size_bytes, 0.0);
+        assert_eq!(file_stats.total_records, None);
+    }
+
+    #[test]
+    fn test_manifest_statistics_structure() {
+        let manifest_stats = ManifestStatistics {
+            num_manifest_files: 5,
+            total_manifest_size_bytes: 500000,
+            avg_manifest_file_size_bytes: 100000.0,
+            num_data_manifests: 4,
+            num_delete_manifests: 1,
+            num_manifest_lists: 1,
+            total_manifest_list_size_bytes: 500000,
+        };
+
+        assert_eq!(manifest_stats.num_manifest_files, 5);
+        assert_eq!(
+            manifest_stats.num_manifest_files,
+            manifest_stats.num_data_manifests + manifest_stats.num_delete_manifests
+        );
+        assert_eq!(manifest_stats.total_manifest_size_bytes, 500000);
+        assert_eq!(manifest_stats.avg_manifest_file_size_bytes, 100000.0);
+    }
+
+    #[test]
+    fn test_manifest_statistics_empty() {
+        let manifest_stats = ManifestStatistics {
+            num_manifest_files: 0,
+            total_manifest_size_bytes: 0,
+            avg_manifest_file_size_bytes: 0.0,
+            num_data_manifests: 0,
+            num_delete_manifests: 0,
+            num_manifest_lists: 0,
+            total_manifest_list_size_bytes: 0,
+        };
+
+        assert_eq!(manifest_stats.num_manifest_files, 0);
+        assert_eq!(manifest_stats.total_manifest_size_bytes, 0);
+        assert_eq!(manifest_stats.avg_manifest_file_size_bytes, 0.0);
+    }
+
+    #[test]
+    fn test_iceberg_metrics_serialization() {
+        let metrics = IcebergMetrics::new();
+
+        // Test that metrics can be serialized to JSON
+        let json = serde_json::to_string(&metrics);
+        assert!(
+            json.is_ok(),
+            "Should be able to serialize IcebergMetrics to JSON"
+        );
+
+        // Test that metrics can be deserialized from JSON
+        let json_str = json.unwrap();
+        let deserialized: Result<IcebergMetrics, _> = serde_json::from_str(&json_str);
+        assert!(
+            deserialized.is_ok(),
+            "Should be able to deserialize IcebergMetrics from JSON"
+        );
+    }
+
+    #[test]
+    fn test_table_metadata_serialization() {
+        let metadata = TableMetadata {
+            location: "/path/to/table".to_string(),
+            last_updated_ms: Some(1234567890),
+            last_column_id: 10,
+            current_schema_id: 1,
+            schema_count: 2,
+            default_spec_id: 0,
+            partition_spec_count: 1,
+            default_sort_order_id: 0,
+            sort_order_count: 1,
+            last_sequence_number: Some(5),
+        };
+
+        let json = serde_json::to_string(&metadata);
+        assert!(json.is_ok());
+
+        let deserialized: Result<TableMetadata, _> = serde_json::from_str(&json.unwrap());
+        assert!(deserialized.is_ok());
+    }
+
+    #[test]
+    fn test_snapshot_metrics_clone() {
+        let snapshot = SnapshotMetrics {
+            total_snapshots: 5,
+            current_snapshot_id: Some(123),
+            current_snapshot_timestamp_ms: Some(1234567890),
+            parent_snapshot_id: Some(122),
+            operation: Some("append".to_string()),
+            summary: HashMap::new(),
+            manifest_list: Some("/path/to/manifest".to_string()),
+            schema_id: Some(1),
+            sequence_number: Some(10),
+        };
+
+        let cloned = snapshot.clone();
+        assert_eq!(snapshot.total_snapshots, cloned.total_snapshots);
+        assert_eq!(snapshot.current_snapshot_id, cloned.current_snapshot_id);
+    }
+
+    #[test]
+    fn test_iceberg_metrics_debug() {
+        let metrics = IcebergMetrics::new();
+        let debug_str = format!("{:?}", metrics);
+        assert!(!debug_str.is_empty());
+        assert!(debug_str.contains("IcebergMetrics"));
+    }
+}

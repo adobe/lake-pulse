@@ -568,3 +568,490 @@ impl IcebergReader {
         })
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // Helper function to get the test iceberg table path
+    fn get_test_iceberg_table_path() -> String {
+        // Use the example iceberg dataset for testing
+        let current_dir = std::env::current_dir().unwrap();
+        let test_path = current_dir.join("examples/data/iceberg_dataset/metadata");
+
+        // Find the latest metadata file
+        if let Ok(entries) = std::fs::read_dir(&test_path) {
+            let mut metadata_files: Vec<_> = entries
+                .filter_map(|e| e.ok())
+                .filter(|e| {
+                    e.file_name()
+                        .to_str()
+                        .map(|s| s.ends_with(".metadata.json"))
+                        .unwrap_or(false)
+                })
+                .collect();
+
+            metadata_files.sort_by_key(|e| e.file_name());
+
+            if let Some(latest) = metadata_files.last() {
+                return format!("file://{}", latest.path().to_str().unwrap());
+            }
+        }
+
+        // Fallback to a default path
+        format!("file://{}/v1.metadata.json", test_path.to_str().unwrap())
+    }
+
+    #[tokio::test]
+    async fn test_iceberg_reader_open_success() {
+        let metadata_location = get_test_iceberg_table_path();
+        let storage_options = HashMap::new();
+
+        let result = IcebergReader::open(&metadata_location, &storage_options).await;
+
+        assert!(
+            result.is_ok(),
+            "Failed to open Iceberg table: {:?}",
+            result.err()
+        );
+    }
+
+    #[tokio::test]
+    async fn test_iceberg_reader_open_invalid_path() {
+        let metadata_location = "file:///nonexistent/path/metadata.json";
+        let storage_options = HashMap::new();
+
+        let result = IcebergReader::open(metadata_location, &storage_options).await;
+
+        assert!(
+            result.is_err(),
+            "Should fail to open non-existent Iceberg table"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_iceberg_reader_extract_metrics_success() {
+        let metadata_location = get_test_iceberg_table_path();
+        let storage_options = HashMap::new();
+
+        let reader = IcebergReader::open(&metadata_location, &storage_options)
+            .await
+            .expect("Failed to open Iceberg table");
+
+        let result = reader.extract_metrics().await;
+
+        assert!(
+            result.is_ok(),
+            "Failed to extract metrics: {:?}",
+            result.err()
+        );
+
+        let metrics = result.unwrap();
+
+        // Verify basic metrics structure
+        assert!(
+            metrics.format_version == 1 || metrics.format_version == 2,
+            "Format version should be 1 or 2"
+        );
+        assert!(
+            !metrics.table_uuid.is_empty(),
+            "Table UUID should not be empty"
+        );
+        assert!(
+            !metrics.metadata.location.is_empty(),
+            "Table location should not be empty"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_iceberg_reader_extract_table_metadata() {
+        let metadata_location = get_test_iceberg_table_path();
+        let storage_options = HashMap::new();
+
+        let reader = IcebergReader::open(&metadata_location, &storage_options)
+            .await
+            .expect("Failed to open Iceberg table");
+
+        let metrics = reader
+            .extract_metrics()
+            .await
+            .expect("Failed to extract metrics");
+
+        // Verify table metadata
+        assert!(!metrics.metadata.location.is_empty());
+        assert!(metrics.metadata.last_column_id >= 0);
+        assert!(metrics.metadata.current_schema_id >= 0);
+        assert!(metrics.metadata.schema_count > 0);
+        assert!(metrics.metadata.default_spec_id >= 0);
+        assert!(metrics.metadata.partition_spec_count > 0);
+    }
+
+    #[tokio::test]
+    async fn test_iceberg_reader_extract_snapshot_metrics() {
+        let metadata_location = get_test_iceberg_table_path();
+        let storage_options = HashMap::new();
+
+        let reader = IcebergReader::open(&metadata_location, &storage_options)
+            .await
+            .expect("Failed to open Iceberg table");
+
+        let metrics = reader
+            .extract_metrics()
+            .await
+            .expect("Failed to extract metrics");
+
+        // Verify snapshot metrics - total_snapshots is usize, always >= 0
+
+        if metrics.snapshot_info.current_snapshot_id.is_some() {
+            assert!(metrics
+                .snapshot_info
+                .current_snapshot_timestamp_ms
+                .is_some());
+            assert!(metrics.snapshot_info.operation.is_some());
+        }
+    }
+
+    #[tokio::test]
+    async fn test_iceberg_reader_extract_schema_metrics() {
+        let metadata_location = get_test_iceberg_table_path();
+        let storage_options = HashMap::new();
+
+        let reader = IcebergReader::open(&metadata_location, &storage_options)
+            .await
+            .expect("Failed to open Iceberg table");
+
+        let metrics = reader
+            .extract_metrics()
+            .await
+            .expect("Failed to extract metrics");
+
+        // Verify schema metrics
+        assert!(metrics.schema_info.schema_id >= 0);
+        assert!(metrics.schema_info.field_count > 0);
+        assert!(!metrics.schema_info.schema_string.is_empty());
+        assert!(!metrics.schema_info.field_names.is_empty());
+        assert_eq!(
+            metrics.schema_info.field_count,
+            metrics.schema_info.field_names.len()
+        );
+        assert_eq!(
+            metrics.schema_info.field_count,
+            metrics.schema_info.required_field_count + metrics.schema_info.optional_field_count
+        );
+    }
+
+    #[tokio::test]
+    async fn test_iceberg_reader_extract_partition_spec_metrics() {
+        let metadata_location = get_test_iceberg_table_path();
+        let storage_options = HashMap::new();
+
+        let reader = IcebergReader::open(&metadata_location, &storage_options)
+            .await
+            .expect("Failed to open Iceberg table");
+
+        let metrics = reader
+            .extract_metrics()
+            .await
+            .expect("Failed to extract metrics");
+
+        // Verify partition spec metrics
+        assert!(metrics.partition_spec.spec_id >= 0);
+        assert_eq!(
+            metrics.partition_spec.partition_field_count,
+            metrics.partition_spec.partition_fields.len()
+        );
+        assert_eq!(
+            metrics.partition_spec.partition_field_count,
+            metrics.partition_spec.partition_transforms.len()
+        );
+        assert_eq!(
+            metrics.partition_spec.is_partitioned,
+            metrics.partition_spec.partition_field_count > 0
+        );
+    }
+
+    #[tokio::test]
+    async fn test_iceberg_reader_extract_sort_order_metrics() {
+        let metadata_location = get_test_iceberg_table_path();
+        let storage_options = HashMap::new();
+
+        let reader = IcebergReader::open(&metadata_location, &storage_options)
+            .await
+            .expect("Failed to open Iceberg table");
+
+        let metrics = reader
+            .extract_metrics()
+            .await
+            .expect("Failed to extract metrics");
+
+        // Verify sort order metrics
+        assert!(metrics.sort_order.order_id >= 0);
+        assert_eq!(
+            metrics.sort_order.sort_field_count,
+            metrics.sort_order.sort_fields.len()
+        );
+        assert_eq!(
+            metrics.sort_order.sort_field_count,
+            metrics.sort_order.sort_directions.len()
+        );
+        assert_eq!(
+            metrics.sort_order.sort_field_count,
+            metrics.sort_order.null_orders.len()
+        );
+        assert_eq!(
+            metrics.sort_order.is_sorted,
+            metrics.sort_order.sort_field_count > 0
+        );
+    }
+
+    #[tokio::test]
+    async fn test_iceberg_reader_extract_file_statistics() {
+        let metadata_location = get_test_iceberg_table_path();
+        let storage_options = HashMap::new();
+
+        let reader = IcebergReader::open(&metadata_location, &storage_options)
+            .await
+            .expect("Failed to open Iceberg table");
+
+        let metrics = reader
+            .extract_metrics()
+            .await
+            .expect("Failed to extract metrics");
+
+        // Verify file statistics
+        if metrics.file_stats.num_data_files > 0 {
+            assert!(
+                metrics.file_stats.total_data_size_bytes > 0,
+                "Total data size should be greater than 0 when files exist"
+            );
+            assert!(
+                metrics.file_stats.avg_data_file_size_bytes > 0.0,
+                "Average file size should be greater than 0 when files exist"
+            );
+        } else {
+            assert_eq!(metrics.file_stats.total_data_size_bytes, 0);
+            assert_eq!(metrics.file_stats.avg_data_file_size_bytes, 0.0);
+        }
+    }
+
+    #[tokio::test]
+    async fn test_iceberg_reader_extract_manifest_statistics() {
+        let metadata_location = get_test_iceberg_table_path();
+        let storage_options = HashMap::new();
+
+        let reader = IcebergReader::open(&metadata_location, &storage_options)
+            .await
+            .expect("Failed to open Iceberg table");
+
+        let metrics = reader
+            .extract_metrics()
+            .await
+            .expect("Failed to extract metrics");
+
+        // Verify manifest statistics
+        assert_eq!(
+            metrics.manifest_stats.num_manifest_files,
+            metrics.manifest_stats.num_data_manifests + metrics.manifest_stats.num_delete_manifests
+        );
+
+        if metrics.manifest_stats.num_manifest_files > 0 {
+            assert!(
+                metrics.manifest_stats.avg_manifest_file_size_bytes > 0.0,
+                "Average manifest size should be greater than 0 when manifests exist"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn test_iceberg_reader_format_version() {
+        let metadata_location = get_test_iceberg_table_path();
+        let storage_options = HashMap::new();
+
+        let reader = IcebergReader::open(&metadata_location, &storage_options)
+            .await
+            .expect("Failed to open Iceberg table");
+
+        let metrics = reader
+            .extract_metrics()
+            .await
+            .expect("Failed to extract metrics");
+
+        // Iceberg format version should be 1 or 2
+        assert!(
+            metrics.format_version == 1 || metrics.format_version == 2,
+            "Format version should be 1 or 2, got {}",
+            metrics.format_version
+        );
+    }
+
+    #[tokio::test]
+    async fn test_iceberg_reader_table_uuid_format() {
+        let metadata_location = get_test_iceberg_table_path();
+        let storage_options = HashMap::new();
+
+        let reader = IcebergReader::open(&metadata_location, &storage_options)
+            .await
+            .expect("Failed to open Iceberg table");
+
+        let metrics = reader
+            .extract_metrics()
+            .await
+            .expect("Failed to extract metrics");
+
+        // Iceberg table UUIDs are typically UUIDs
+        assert!(!metrics.table_uuid.is_empty());
+        // Should contain hyphens (UUID format)
+        assert!(metrics.table_uuid.contains('-'));
+    }
+
+    #[tokio::test]
+    async fn test_iceberg_reader_multiple_extractions() {
+        let metadata_location = get_test_iceberg_table_path();
+        let storage_options = HashMap::new();
+
+        let reader = IcebergReader::open(&metadata_location, &storage_options)
+            .await
+            .expect("Failed to open Iceberg table");
+
+        // Extract metrics multiple times to ensure it's idempotent
+        let metrics1 = reader
+            .extract_metrics()
+            .await
+            .expect("First extraction failed");
+        let metrics2 = reader
+            .extract_metrics()
+            .await
+            .expect("Second extraction failed");
+
+        // Both extractions should return the same data
+        assert_eq!(metrics1.table_uuid, metrics2.table_uuid);
+        assert_eq!(metrics1.format_version, metrics2.format_version);
+        assert_eq!(metrics1.current_snapshot_id, metrics2.current_snapshot_id);
+        assert_eq!(
+            metrics1.file_stats.num_data_files,
+            metrics2.file_stats.num_data_files
+        );
+    }
+
+    #[tokio::test]
+    async fn test_iceberg_reader_schema_json_validity() {
+        let metadata_location = get_test_iceberg_table_path();
+        let storage_options = HashMap::new();
+
+        let reader = IcebergReader::open(&metadata_location, &storage_options)
+            .await
+            .expect("Failed to open Iceberg table");
+
+        let metrics = reader
+            .extract_metrics()
+            .await
+            .expect("Failed to extract metrics");
+
+        // Verify schema is valid JSON
+        let schema_json: serde_json::Value =
+            serde_json::from_str(&metrics.schema_info.schema_string)
+                .expect("Schema should be valid JSON");
+
+        // Schema should have a type field
+        assert!(schema_json.get("type").is_some());
+    }
+
+    #[tokio::test]
+    async fn test_iceberg_reader_table_properties() {
+        let metadata_location = get_test_iceberg_table_path();
+        let storage_options = HashMap::new();
+
+        let reader = IcebergReader::open(&metadata_location, &storage_options)
+            .await
+            .expect("Failed to open Iceberg table");
+
+        let metrics = reader
+            .extract_metrics()
+            .await
+            .expect("Failed to extract metrics");
+
+        // Table properties should be a valid HashMap (len is always >= 0)
+        // Just verify it's accessible
+        let _ = metrics.table_properties.len();
+    }
+
+    #[tokio::test]
+    async fn test_iceberg_reader_snapshot_summary() {
+        let metadata_location = get_test_iceberg_table_path();
+        let storage_options = HashMap::new();
+
+        let reader = IcebergReader::open(&metadata_location, &storage_options)
+            .await
+            .expect("Failed to open Iceberg table");
+
+        let metrics = reader
+            .extract_metrics()
+            .await
+            .expect("Failed to extract metrics");
+
+        // If there's a current snapshot, it should have a summary
+        if metrics.current_snapshot_id.is_some() {
+            // Summary should be a valid HashMap (len is always >= 0)
+            // Just verify it's accessible
+            let _ = metrics.snapshot_info.summary.len();
+        }
+    }
+
+    #[tokio::test]
+    async fn test_iceberg_reader_delete_files_metrics() {
+        let metadata_location = get_test_iceberg_table_path();
+        let storage_options = HashMap::new();
+
+        let reader = IcebergReader::open(&metadata_location, &storage_options)
+            .await
+            .expect("Failed to open Iceberg table");
+
+        let metrics = reader
+            .extract_metrics()
+            .await
+            .expect("Failed to extract metrics");
+
+        // Verify delete file metrics consistency
+        assert_eq!(
+            metrics.file_stats.num_delete_files,
+            metrics.file_stats.num_position_delete_files
+                + metrics.file_stats.num_equality_delete_files
+        );
+    }
+
+    #[tokio::test]
+    async fn test_iceberg_reader_with_storage_options() {
+        let metadata_location = get_test_iceberg_table_path();
+        let mut storage_options = HashMap::new();
+
+        // Add some storage options (these won't affect local file access)
+        storage_options.insert("test_option".to_string(), "test_value".to_string());
+
+        let result = IcebergReader::open(&metadata_location, &storage_options).await;
+
+        assert!(
+            result.is_ok(),
+            "Should be able to open table with storage options"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_iceberg_reader_sequence_numbers() {
+        let metadata_location = get_test_iceberg_table_path();
+        let storage_options = HashMap::new();
+
+        let reader = IcebergReader::open(&metadata_location, &storage_options)
+            .await
+            .expect("Failed to open Iceberg table");
+
+        let metrics = reader
+            .extract_metrics()
+            .await
+            .expect("Failed to extract metrics");
+
+        // If there's a current snapshot, sequence numbers should be consistent
+        if metrics.snapshot_info.sequence_number.is_some() {
+            assert!(metrics.metadata.last_sequence_number.is_some());
+        }
+    }
+}
