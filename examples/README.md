@@ -4,7 +4,7 @@ This is a folder where some examples are provided to understand the use of the l
 
 ## Prerequisites
 
-Some tables need to be created, some are easy to create, some are not. The `data/Readme.md` file
+Some tables need to be created, some are easy to create, some are not. The `data/README.md` file
 contains instructions on how to create the tables.
 
 ## Run the Examples

@@ -17,22 +17,12 @@ async fn main() {
         .await
         .unwrap();
 
-    // Generate report
+    // Generate report for the synthetic deletion vectors test dataset
     let report = analyzer
-        .analyze("delta_dataset_with_features")
+        .analyze("delta_with_synthetic_deletion_vectors")
         .await
         .unwrap();
 
     // Print as JSON
     println!("{}", report);
-    // Print execution timeline as Gantt chart
-    println!(
-        "{}",
-        report
-            .timed_metrics
-            .duration_collection_as_gantt(None)
-            .unwrap()
-    );
-    // Print as Chrome tracing
-    println!("{}", report.timed_metrics.to_chrome_tracing().unwrap());
 }

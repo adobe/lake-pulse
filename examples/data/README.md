@@ -311,3 +311,108 @@ spark-shell \
 --conf spark.sql.catalog.lance.impl=dir \
 --conf spark.sql.catalog.lance.root=file://$DATA_DIR
 ```
+
+## Delta Lake with Features
+
+This will create a Delta Table that has the following features enabled:
+- Change Data Feed
+- Deletion Vectors
+- Z-Ordering
+
+```scala
+import org.apache.spark.sql.functions._
+import io.delta.tables._
+
+val tablePath = "data/delta_dataset_with_features"
+
+spark.sql("DROP TABLE IF EXISTS delta_table_clustered")
+
+spark.sql(s"""
+  CREATE TABLE delta_table_clustered (
+    id INT,
+    name STRING,
+    department STRING,
+    salary INT
+  )
+  USING DELTA
+  LOCATION '$tablePath'
+  TBLPROPERTIES (
+    'delta.enableChangeDataFeed' = 'true',
+    'delta.enableDeletionVectors' = 'true'
+  )
+""")
+spark.sql("""
+  INSERT INTO delta_table_clustered VALUES
+  (1, 'Alice', 'Engineering', 100000),
+  (2, 'Bob', 'Sales', 80000),
+  (3, 'Charlie', 'Engineering', 95000)
+""")
+
+val deltaTable = DeltaTable.forPath(spark, tablePath)
+deltaTable.optimize().executeZOrderBy("department")
+
+val append1 = Seq(
+  (4, "David", "Marketing", 75000),
+  (5, "Eve", "Engineering", 105000)
+).toDF("id", "name", "department", "salary")
+append1.write
+  .format("delta")
+  .mode("append")
+  .save(tablePath)
+
+val append2 = Seq(
+  (6, "Frank", "Sales", 85000),
+  (7, "Grace", "Marketing", 78000)
+).toDF("id", "name", "department", "salary")
+append2.write
+  .format("delta")
+  .mode("append")
+  .save(tablePath)
+
+deltaTable.delete(col("salary") < 80000)
+
+val append3 = Seq(
+  (8, "Henry", "Engineering", 98000),
+  (9, "Iris", "Sales", 82000)
+).toDF("id", "name", "department", "salary")
+append3.write
+  .format("delta")
+  .mode("append")
+  .save(tablePath)
+
+val append4 = Seq(
+  (10, "Jack", "Marketing", 88000),
+  (11, "Kate", "Engineering", 110000)
+).toDF("id", "name", "department", "salary")
+append4.write
+  .format("delta")
+  .mode("append")
+  .save(tablePath)
+
+deltaTable.delete(col("department") === "Marketing")
+
+val mergeData = Seq(
+  (1, "Alice Updated", "Engineering", 110000),
+  (12, "Leo", "Sales", 90000)
+).toDF("id", "name", "department", "salary")
+deltaTable.as("target")
+  .merge(
+    mergeData.as("source"),
+    "target.id = source.id"
+  )
+  .whenMatched()
+  .updateAll()
+  .whenNotMatched()
+  .insertAll()
+  .execute()
+```
+
+Spark Shell Command:
+
+```bash
+spark-shell \
+--driver-memory 8g \
+--packages "com.typesafe:config:1.3.2,org.apache.spark:spark-avro_2.12:3.2.1,com.typesafe:config:1.3.2,org.apache.spark:spark-streaming-kafka-0-10_2.12:3.2.1,org.apache.spark:spark-streaming_2.12:3.2.1,org.apache.spark:spark-sql_2.12:3.2.1,org.apache.spark:spark-sql-kafka-0-10_2.12:3.2.1,io.delta:delta-core_2.12:2.4.0,io.delta:delta-storage:2.4.0,io.delta:delta-standalone_2.12:3.3.0,org.json4s:json4s-native_2.12:3.7.0-M11,joda-time:joda-time:2.12.5,org.apache.iceberg:iceberg-spark-runtime-3.4_2.12:1.7.2" \
+--driver-java-options "-agentlib:jdwp=transport=dt_socket,server=y,suspend=n,address=5006 -XX:+UseG1GC -Dlog4j.debug=true" \
+--conf spark.hadoop.parquet.page.verify-checksum.enabled=true --conf spark.hadoop.parquet.write-checksum.enabled=true --conf parquet.page.verify-checksum.enabled=true --conf parquet.write-checksum.enabled=true --conf spark.sql.extensions=io.delta.sql.DeltaSparkSessionExtension --conf spark.sql.catalog.spark_catalog=org.apache.spark.sql.delta.catalog.DeltaCatalog
+```
