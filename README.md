@@ -1,8 +1,9 @@
-# Lake Pulse <img src=./rustacean-flat-happy.svg style="width:    40px" />
+# Lake Pulse <img src=./rustacean-flat-happy.svg style="width: 40px" />
 
 ![Code Coverage](./badges/coverage.svg)
 ![License](./badges/license.svg)
 ![Rust Version](./badges/rust-version.svg)
+![Documentation](./badges/docs-passing.svg)
 
 ```
     __          __           ____        __
@@ -16,10 +17,19 @@ A Rust library for analyzing data lake table health across multiple formats (Del
 
 ## Supported Formats
 
-![Delta Lake](./badges/delta-lake.svg)
-![Apache Iceberg](./badges/apache-iceberg.svg)
-![Apache Hudi](./badges/apache-hudi.svg)
-![Lance](./badges/lance.svg)
+[![Delta Lake][delta-badge]][delta-link]
+[![Apache Iceberg][iceberg-badge]][iceberg-link]
+[![Apache Hudi][hudi-badge]][hudi-link]
+[![Lance][lance-badge]][lance-link]
+
+[delta-badge]: ./badges/delta-lake.svg
+[delta-link]: https://github.com/delta-io/delta
+[iceberg-badge]: ./badges/apache-iceberg.svg
+[iceberg-link]: https://github.com/apache/iceberg
+[hudi-badge]: ./badges/apache-hudi.svg
+[hudi-link]: https://github.com/apache/hudi
+[lance-badge]: ./badges/lance.svg
+[lance-link]: https://github.com/lancedb/lance
 
 ## Overview
 
