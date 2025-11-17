@@ -1382,12 +1382,21 @@ mod tests {
     // Mock storage provider for testing
     struct MockStorageProvider {
         options: OnceLock<HashMap<String, String>>,
+        test_data: Option<Vec<u8>>,
     }
 
     impl MockStorageProvider {
         fn new() -> Self {
             Self {
                 options: OnceLock::new(),
+                test_data: None,
+            }
+        }
+
+        fn with_data(data: Vec<u8>) -> Self {
+            Self {
+                options: OnceLock::new(),
+                test_data: Some(data),
             }
         }
     }
@@ -1428,7 +1437,11 @@ mod tests {
         }
 
         async fn read_file(&self, _path: &str) -> StorageResult<Vec<u8>> {
-            Ok(vec![])
+            if let Some(ref data) = self.test_data {
+                Ok(data.clone())
+            } else {
+                Ok(vec![])
+            }
         }
 
         async fn exists(&self, _path: &str) -> StorageResult<bool> {
@@ -1923,5 +1936,895 @@ mod tests {
             retention, 30,
             "Many snapshots should recommend shorter retention"
         );
+    }
+
+    // Tests for extract_constraints_from_schema
+    #[test]
+    fn test_extract_constraints_from_schema_empty() {
+        let analyzer = create_test_analyzer();
+        let fields = vec![];
+
+        let (total, check, not_null, unique, foreign_key) =
+            analyzer.extract_constraints_from_schema(&fields);
+
+        assert_eq!(total, 0);
+        assert_eq!(check, 0);
+        assert_eq!(not_null, 0);
+        assert_eq!(unique, 0);
+        assert_eq!(foreign_key, 0);
+    }
+
+    #[test]
+    fn test_extract_constraints_from_schema_not_null() {
+        let analyzer = create_test_analyzer();
+        let fields = vec![
+            json!({"name": "id", "type": "long", "required": true}),
+            json!({"name": "name", "type": "string", "required": false}),
+        ];
+
+        let (total, _check, not_null, _unique, _foreign_key) =
+            analyzer.extract_constraints_from_schema(&fields);
+
+        assert_eq!(total, 2);
+        assert_eq!(not_null, 1);
+    }
+
+    #[test]
+    fn test_extract_constraints_from_schema_with_metadata() {
+        let analyzer = create_test_analyzer();
+        let fields = vec![json!({
+            "name": "id",
+            "type": "long",
+            "required": true,
+            "metadata": {
+                "constraint": "id > 0",
+                "unique": true
+            }
+        })];
+
+        let (total, check, not_null, unique, _foreign_key) =
+            analyzer.extract_constraints_from_schema(&fields);
+
+        assert_eq!(total, 1);
+        assert_eq!(not_null, 1);
+        assert_eq!(check, 1);
+        assert_eq!(unique, 1);
+    }
+
+    #[test]
+    fn test_extract_constraints_from_schema_with_doc() {
+        let analyzer = create_test_analyzer();
+        let fields = vec![json!({
+            "name": "user_id",
+            "type": "long",
+            "doc": "Foreign key reference to users table"
+        })];
+
+        let (total, _check, _not_null, _unique, foreign_key) =
+            analyzer.extract_constraints_from_schema(&fields);
+
+        assert_eq!(total, 1);
+        assert_eq!(foreign_key, 1);
+    }
+
+    // Tests for extract_snapshot_metrics
+    #[test]
+    fn test_extract_snapshot_metrics_empty() {
+        let analyzer = create_test_analyzer();
+        let json = json!({});
+        let mut result = MetadataProcessingResult::default();
+
+        analyzer.extract_snapshot_metrics(&json, &mut result);
+
+        assert_eq!(result.total_snapshots, 0);
+        assert_eq!(result.oldest_timestamp, 0);
+        assert_eq!(result.newest_timestamp, 0);
+    }
+
+    #[test]
+    fn test_extract_snapshot_metrics_single_snapshot() {
+        let analyzer = create_test_analyzer();
+        let json = json!({
+            "snapshots": [
+                {
+                    "timestamp-ms": 1234567890000_u64,
+                    "summary": {
+                        "total-data-files": "10"
+                    }
+                }
+            ]
+        });
+        let mut result = MetadataProcessingResult {
+            oldest_timestamp: u64::MAX, // Initialize to max so min() works correctly
+            ..Default::default()
+        };
+
+        analyzer.extract_snapshot_metrics(&json, &mut result);
+
+        assert_eq!(result.total_snapshots, 1);
+        assert_eq!(result.oldest_timestamp, 1234567890000_u64);
+        assert_eq!(result.newest_timestamp, 1234567890000_u64);
+        assert!(result.total_historical_size > 0);
+    }
+
+    #[test]
+    fn test_extract_snapshot_metrics_multiple_snapshots() {
+        let analyzer = create_test_analyzer();
+        let json = json!({
+            "snapshots": [
+                {
+                    "timestamp-ms": 1000000000000_u64,
+                    "summary": {
+                        "total-data-files": "5"
+                    }
+                },
+                {
+                    "timestamp-ms": 2000000000000_u64,
+                    "summary": {
+                        "total-data-files": "10"
+                    }
+                }
+            ]
+        });
+        let mut result = MetadataProcessingResult {
+            oldest_timestamp: u64::MAX, // Initialize to max so min() works correctly
+            ..Default::default()
+        };
+
+        analyzer.extract_snapshot_metrics(&json, &mut result);
+
+        assert_eq!(result.total_snapshots, 2);
+        assert_eq!(result.oldest_timestamp, 1000000000000_u64);
+        assert_eq!(result.newest_timestamp, 2000000000000_u64);
+    }
+
+    #[test]
+    fn test_extract_snapshot_metrics_with_delete_files() {
+        let analyzer = create_test_analyzer();
+        let json = json!({
+            "snapshots": [
+                {
+                    "timestamp-ms": 1234567890000_u64,
+                    "summary": {
+                        "total-data-files": "10",
+                        "total-delete-files": "5",
+                        "total-position-deletes": "3",
+                        "total-equality-deletes": "2"
+                    }
+                }
+            ]
+        });
+        let mut result = MetadataProcessingResult::default();
+
+        analyzer.extract_snapshot_metrics(&json, &mut result);
+
+        assert_eq!(result.total_snapshots, 1);
+        assert_eq!(result.delete_files_count, 10); // 5 + 3 + 2
+    }
+
+    // Tests for extract_schema_and_constraints
+    #[test]
+    fn test_extract_schema_and_constraints_empty() {
+        let analyzer = create_test_analyzer();
+        let json = json!({});
+        let mut result = MetadataProcessingResult::default();
+
+        analyzer.extract_schema_and_constraints(&json, &mut result, 1);
+
+        assert_eq!(result.total_constraints, 0);
+        assert_eq!(result.schema_changes.len(), 0);
+    }
+
+    #[test]
+    fn test_extract_schema_and_constraints_single_schema() {
+        let analyzer = create_test_analyzer();
+        let json = json!({
+            "schemas": [
+                {
+                    "fields": [
+                        {"name": "id", "type": "long", "required": true},
+                        {"name": "name", "type": "string", "required": false}
+                    ]
+                }
+            ]
+        });
+        let mut result = MetadataProcessingResult::default();
+
+        analyzer.extract_schema_and_constraints(&json, &mut result, 1);
+
+        assert_eq!(result.total_constraints, 2);
+        assert_eq!(result.not_null_constraints, 1);
+        assert_eq!(result.schema_changes.len(), 1);
+        assert!(!result.schema_changes[0].is_breaking);
+    }
+
+    #[test]
+    fn test_extract_schema_and_constraints_multiple_schemas() {
+        let analyzer = create_test_analyzer();
+        let json = json!({
+            "schemas": [
+                {
+                    "fields": [
+                        {"name": "id", "type": "long", "required": true}
+                    ]
+                },
+                {
+                    "fields": [
+                        {"name": "id", "type": "long", "required": true},
+                        {"name": "name", "type": "string", "required": false}
+                    ]
+                }
+            ]
+        });
+        let mut result = MetadataProcessingResult::default();
+
+        analyzer.extract_schema_and_constraints(&json, &mut result, 1);
+
+        assert_eq!(result.schema_changes.len(), 2);
+        assert!(!result.schema_changes[0].is_breaking);
+        assert!(!result.schema_changes[1].is_breaking); // Adding field is not breaking
+    }
+
+    #[test]
+    fn test_extract_schema_and_constraints_with_breaking_change() {
+        let analyzer = create_test_analyzer();
+        let json = json!({
+            "schemas": [
+                {
+                    "fields": [
+                        {"name": "id", "type": "long", "required": true},
+                        {"name": "name", "type": "string", "required": false}
+                    ]
+                },
+                {
+                    "fields": [
+                        {"name": "id", "type": "long", "required": true}
+                    ]
+                }
+            ]
+        });
+        let mut result = MetadataProcessingResult::default();
+
+        analyzer.extract_schema_and_constraints(&json, &mut result, 1);
+
+        assert_eq!(result.schema_changes.len(), 2);
+        assert!(!result.schema_changes[0].is_breaking);
+        assert!(result.schema_changes[1].is_breaking); // Removing field is breaking
+    }
+
+    // Tests for calculate_compaction_opportunity
+    #[test]
+    fn test_calculate_compaction_opportunity_zero_files() {
+        let analyzer = create_test_analyzer();
+
+        let score = analyzer.calculate_compaction_opportunity(0, 0);
+
+        assert_eq!(score, 0.0);
+    }
+
+    #[test]
+    fn test_calculate_compaction_opportunity_low() {
+        let analyzer = create_test_analyzer();
+
+        let score = analyzer.calculate_compaction_opportunity(10, 100);
+
+        assert_eq!(score, 0.2); // 10% ratio
+    }
+
+    #[test]
+    fn test_calculate_compaction_opportunity_medium() {
+        let analyzer = create_test_analyzer();
+
+        let score = analyzer.calculate_compaction_opportunity(50, 100);
+
+        assert_eq!(score, 0.6); // 50% ratio
+    }
+
+    #[test]
+    fn test_calculate_compaction_opportunity_high() {
+        let analyzer = create_test_analyzer();
+
+        let score = analyzer.calculate_compaction_opportunity(85, 100);
+
+        assert_eq!(score, 1.0); // 85% ratio
+    }
+
+    // Tests for calculate_compaction_priority
+    #[test]
+    fn test_calculate_compaction_priority_low() {
+        let analyzer = create_test_analyzer();
+
+        let priority = analyzer.calculate_compaction_priority(0.3, 10);
+
+        assert_eq!(priority, "low");
+    }
+
+    #[test]
+    fn test_calculate_compaction_priority_medium() {
+        let analyzer = create_test_analyzer();
+
+        let priority = analyzer.calculate_compaction_priority(0.5, 25);
+
+        assert_eq!(priority, "medium");
+    }
+
+    #[test]
+    fn test_calculate_compaction_priority_high() {
+        let analyzer = create_test_analyzer();
+
+        let priority = analyzer.calculate_compaction_priority(0.7, 60);
+
+        assert_eq!(priority, "high");
+    }
+
+    #[test]
+    fn test_calculate_compaction_priority_critical() {
+        let analyzer = create_test_analyzer();
+
+        let priority = analyzer.calculate_compaction_priority(0.9, 150);
+
+        assert_eq!(priority, "critical");
+    }
+
+    #[test]
+    fn test_calculate_compaction_priority_critical_by_count() {
+        let analyzer = create_test_analyzer();
+
+        let priority = analyzer.calculate_compaction_priority(0.5, 150);
+
+        assert_eq!(priority, "critical"); // >100 small files
+    }
+
+    // Tests for calculate_file_compaction_metrics
+    #[test]
+    fn test_calculate_file_compaction_metrics_zero_files() {
+        let analyzer = create_test_analyzer();
+
+        let metrics = analyzer.calculate_file_compaction_metrics(0, 0, &[]);
+
+        assert_eq!(metrics.small_files_count, 0);
+        assert_eq!(metrics.compaction_opportunity_score, 0.0);
+        assert_eq!(metrics.compaction_priority, "low");
+    }
+
+    #[test]
+    fn test_calculate_file_compaction_metrics_small_files() {
+        let analyzer = create_test_analyzer();
+        let total_files = 100;
+        let avg_size = 8 * 1024 * 1024; // 8MB average
+        let total_size = total_files as u64 * avg_size;
+
+        let metrics = analyzer.calculate_file_compaction_metrics(total_files, total_size, &[]);
+
+        assert!(metrics.small_files_count > 0);
+        assert!(metrics.compaction_opportunity_score > 0.0);
+        assert!(metrics.small_files_size_bytes > 0);
+    }
+
+    #[test]
+    fn test_calculate_file_compaction_metrics_large_files() {
+        let analyzer = create_test_analyzer();
+        let total_files = 100;
+        let avg_size = 128 * 1024 * 1024; // 128MB average
+        let total_size = total_files as u64 * avg_size;
+
+        let metrics = analyzer.calculate_file_compaction_metrics(total_files, total_size, &[]);
+
+        // Should estimate fewer small files
+        assert!(metrics.small_files_count < total_files);
+        assert!(metrics.compaction_opportunity_score < 1.0);
+    }
+
+    #[test]
+    fn test_calculate_file_compaction_metrics_with_sort_order() {
+        let analyzer = create_test_analyzer();
+        let sort_columns = vec!["date".to_string(), "user_id".to_string()];
+
+        let metrics = analyzer.calculate_file_compaction_metrics(100, 1024 * 1024 * 1024, &sort_columns);
+
+        assert!(metrics.z_order_opportunity);
+        assert_eq!(metrics.z_order_columns, sort_columns);
+    }
+
+    // Tests for calculate_deletion_impact_score
+    #[test]
+    fn test_calculate_deletion_impact_score_zero() {
+        let analyzer = create_test_analyzer();
+
+        let score = analyzer.calculate_deletion_impact_score(0, 0.0);
+
+        assert!(score >= 0.0);
+        assert!(score <= 1.0);
+    }
+
+    #[test]
+    fn test_calculate_deletion_impact_score_low() {
+        let analyzer = create_test_analyzer();
+
+        let score = analyzer.calculate_deletion_impact_score(5, 3.0);
+
+        assert!(score >= 0.0);
+        assert!(score < 0.5);
+    }
+
+    #[test]
+    fn test_calculate_deletion_impact_score_medium() {
+        let analyzer = create_test_analyzer();
+
+        let score = analyzer.calculate_deletion_impact_score(150, 40.0);
+
+        assert!(score >= 0.4);
+        assert!(score <= 1.0);
+    }
+
+    #[test]
+    fn test_calculate_deletion_impact_score_high() {
+        let analyzer = create_test_analyzer();
+
+        let score = analyzer.calculate_deletion_impact_score(1500, 120.0);
+
+        assert!(score >= 0.8);
+        assert!(score <= 1.0);
+    }
+
+    // Tests for calculate_deletion_vector_metrics
+    #[test]
+    fn test_calculate_deletion_vector_metrics_zero() {
+        let analyzer = create_test_analyzer();
+
+        let metrics = analyzer.calculate_deletion_vector_metrics(0, 0, 0);
+
+        assert_eq!(metrics.deletion_vector_count, 0);
+        assert_eq!(metrics.total_deletion_vector_size_bytes, 0);
+        assert_eq!(metrics.deleted_rows_count, 0);
+    }
+
+    #[test]
+    fn test_calculate_deletion_vector_metrics_with_deletes() {
+        let analyzer = create_test_analyzer();
+        let delete_count = 100;
+        let now = chrono::Utc::now().timestamp() as u64;
+        let oldest_timestamp = (now - 86400 * 30) * 1000; // 30 days ago in ms
+
+        let metrics = analyzer.calculate_deletion_vector_metrics(delete_count, oldest_timestamp, now * 1000);
+
+        assert_eq!(metrics.deletion_vector_count, 100);
+        assert_eq!(metrics.total_deletion_vector_size_bytes, 100 * 1024); // 1KB per delete file
+        assert_eq!(metrics.deleted_rows_count, 100 * 100); // 100 rows per delete file
+        assert!(metrics.deletion_vector_age_days > 0.0);
+        assert!(metrics.deletion_vector_impact_score > 0.0);
+    }
+
+    #[test]
+    fn test_calculate_deletion_vector_metrics_old_deletes() {
+        let analyzer = create_test_analyzer();
+        let delete_count = 500;
+        let now = chrono::Utc::now().timestamp() as u64;
+        let oldest_timestamp = (now - 86400 * 120) * 1000; // 120 days ago in ms
+
+        let metrics = analyzer.calculate_deletion_vector_metrics(delete_count, oldest_timestamp, now * 1000);
+
+        assert_eq!(metrics.deletion_vector_count, 500);
+        assert!(metrics.deletion_vector_age_days > 100.0);
+        assert!(metrics.deletion_vector_impact_score > 0.5); // Should have high impact
+    }
+
+    // Tests for calculate_constraint_violation_risk
+    #[test]
+    fn test_calculate_constraint_violation_risk_zero() {
+        let analyzer = create_test_analyzer();
+
+        let risk = analyzer.calculate_constraint_violation_risk(0, 0);
+
+        assert_eq!(risk, 0.0);
+    }
+
+    #[test]
+    fn test_calculate_constraint_violation_risk_low() {
+        let analyzer = create_test_analyzer();
+
+        let risk = analyzer.calculate_constraint_violation_risk(100, 5);
+
+        assert_eq!(risk, 0.2); // 5% check constraint ratio
+    }
+
+    #[test]
+    fn test_calculate_constraint_violation_risk_medium() {
+        let analyzer = create_test_analyzer();
+
+        let risk = analyzer.calculate_constraint_violation_risk(100, 25);
+
+        assert_eq!(risk, 0.4); // 25% check constraint ratio
+    }
+
+    #[test]
+    fn test_calculate_constraint_violation_risk_high() {
+        let analyzer = create_test_analyzer();
+
+        let risk = analyzer.calculate_constraint_violation_risk(100, 60);
+
+        assert_eq!(risk, 0.8); // 60% check constraint ratio
+    }
+
+    // Tests for calculate_data_quality_score
+    #[test]
+    fn test_calculate_data_quality_score_no_constraints() {
+        let analyzer = create_test_analyzer();
+
+        let score = analyzer.calculate_data_quality_score(0, 0.0);
+
+        assert_eq!(score, 1.0);
+    }
+
+    #[test]
+    fn test_calculate_data_quality_score_few_constraints() {
+        let analyzer = create_test_analyzer();
+
+        let score = analyzer.calculate_data_quality_score(3, 0.2);
+
+        assert!(score >= 0.8);
+        assert!(score <= 1.0);
+    }
+
+    #[test]
+    fn test_calculate_data_quality_score_many_constraints() {
+        let analyzer = create_test_analyzer();
+
+        let score = analyzer.calculate_data_quality_score(15, 0.3);
+
+        assert!(score >= 1.0); // Bonus for many constraints
+    }
+
+    #[test]
+    fn test_calculate_data_quality_score_high_risk() {
+        let analyzer = create_test_analyzer();
+
+        let score = analyzer.calculate_data_quality_score(10, 0.9);
+
+        assert!(score < 1.0); // Penalized for high risk
+    }
+
+    // Tests for calculate_constraint_coverage_score
+    #[test]
+    fn test_calculate_constraint_coverage_score_zero() {
+        let analyzer = create_test_analyzer();
+
+        let score = analyzer.calculate_constraint_coverage_score(0, 0);
+
+        assert_eq!(score, 0.0);
+    }
+
+    #[test]
+    fn test_calculate_constraint_coverage_score_low() {
+        let analyzer = create_test_analyzer();
+
+        let score = analyzer.calculate_constraint_coverage_score(100, 5);
+
+        assert_eq!(score, 0.1); // 5% coverage
+    }
+
+    #[test]
+    fn test_calculate_constraint_coverage_score_medium() {
+        let analyzer = create_test_analyzer();
+
+        let score = analyzer.calculate_constraint_coverage_score(100, 25);
+
+        assert_eq!(score, 0.4); // 25% coverage
+    }
+
+    #[test]
+    fn test_calculate_constraint_coverage_score_high() {
+        let analyzer = create_test_analyzer();
+
+        let score = analyzer.calculate_constraint_coverage_score(100, 60);
+
+        assert_eq!(score, 1.0); // 60% coverage
+    }
+
+    // Tests for calculate_schema_metrics
+    #[test]
+    fn test_calculate_schema_metrics_no_changes() {
+        let analyzer = create_test_analyzer();
+        let changes = vec![];
+
+        let result = analyzer.calculate_schema_metrics(changes, 1);
+
+        assert!(result.is_ok());
+        let metrics = result.unwrap();
+        assert!(metrics.is_some());
+        let metrics = metrics.unwrap();
+        assert_eq!(metrics.total_schema_changes, 0);
+        assert_eq!(metrics.breaking_changes, 0);
+        assert_eq!(metrics.non_breaking_changes, 0);
+        assert!(metrics.schema_stability_score > 0.0);
+    }
+
+    #[test]
+    fn test_calculate_schema_metrics_single_change() {
+        let analyzer = create_test_analyzer();
+        let now = chrono::Utc::now().timestamp() as u64;
+        let changes = vec![SchemaChange {
+            version: 1,
+            timestamp: (now - 86400 * 10) * 1000, // 10 days ago in ms
+            schema: json!({"fields": [{"name": "id", "type": "long"}]}),
+            is_breaking: false,
+        }];
+
+        let result = analyzer.calculate_schema_metrics(changes, 1);
+
+        assert!(result.is_ok());
+        let metrics = result.unwrap().unwrap();
+        assert_eq!(metrics.total_schema_changes, 1);
+        assert_eq!(metrics.breaking_changes, 0);
+        assert_eq!(metrics.non_breaking_changes, 1);
+        assert!(metrics.days_since_last_change >= 9.0);
+        assert!(metrics.days_since_last_change <= 11.0);
+    }
+
+    #[test]
+    fn test_calculate_schema_metrics_multiple_changes() {
+        let analyzer = create_test_analyzer();
+        let now = chrono::Utc::now().timestamp() as u64;
+        let changes = vec![
+            SchemaChange {
+                version: 1,
+                timestamp: (now - 86400 * 100) * 1000, // 100 days ago
+                schema: json!({"fields": [{"name": "id", "type": "long"}]}),
+                is_breaking: false,
+            },
+            SchemaChange {
+                version: 2,
+                timestamp: (now - 86400 * 50) * 1000, // 50 days ago
+                schema: json!({"fields": [{"name": "id", "type": "long"}, {"name": "name", "type": "string"}]}),
+                is_breaking: false,
+            },
+            SchemaChange {
+                version: 3,
+                timestamp: (now - 86400 * 10) * 1000, // 10 days ago
+                schema: json!({"fields": [{"name": "id", "type": "long"}]}),
+                is_breaking: true,
+            },
+        ];
+
+        let result = analyzer.calculate_schema_metrics(changes, 3);
+
+        assert!(result.is_ok());
+        let metrics = result.unwrap().unwrap();
+        assert_eq!(metrics.total_schema_changes, 3);
+        assert_eq!(metrics.breaking_changes, 1);
+        assert_eq!(metrics.non_breaking_changes, 2);
+        assert!(metrics.schema_change_frequency > 0.0);
+        assert_eq!(metrics.current_schema_version, 3);
+    }
+
+    #[test]
+    fn test_calculate_schema_metrics_all_breaking() {
+        let analyzer = create_test_analyzer();
+        let now = chrono::Utc::now().timestamp() as u64;
+        let changes = vec![
+            SchemaChange {
+                version: 1,
+                timestamp: (now - 86400 * 20) * 1000,
+                schema: json!({"fields": [{"name": "id", "type": "long"}]}),
+                is_breaking: true,
+            },
+            SchemaChange {
+                version: 2,
+                timestamp: (now - 86400 * 10) * 1000,
+                schema: json!({"fields": [{"name": "id", "type": "string"}]}),
+                is_breaking: true,
+            },
+        ];
+
+        let result = analyzer.calculate_schema_metrics(changes, 2);
+
+        assert!(result.is_ok());
+        let metrics = result.unwrap().unwrap();
+        assert_eq!(metrics.total_schema_changes, 2);
+        assert_eq!(metrics.breaking_changes, 2);
+        assert_eq!(metrics.non_breaking_changes, 0);
+        // With 2 breaking changes, score is 1.0 - 0.2 = 0.8
+        assert!(metrics.schema_stability_score < 1.0);
+        assert!(metrics.schema_stability_score > 0.5);
+    }
+
+    #[test]
+    fn test_calculate_schema_metrics_no_timestamps() {
+        let analyzer = create_test_analyzer();
+        let changes = vec![
+            SchemaChange {
+                version: 1,
+                timestamp: 0, // No timestamp
+                schema: json!({"fields": [{"name": "id", "type": "long"}]}),
+                is_breaking: false,
+            },
+        ];
+
+        let result = analyzer.calculate_schema_metrics(changes, 1);
+
+        assert!(result.is_ok());
+        let metrics = result.unwrap().unwrap();
+        assert_eq!(metrics.total_schema_changes, 1);
+        assert_eq!(metrics.days_since_last_change, 365.0); // Default when no timestamp
+    }
+
+    // Async tests for get_manifest_list
+    #[tokio::test]
+    async fn test_get_manifest_list_empty() {
+        let analyzer = create_test_analyzer();
+        let metadata = json!({});
+
+        let result = analyzer.get_manifest_list(&metadata).await;
+
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap().len(), 0);
+    }
+
+    #[tokio::test]
+    async fn test_get_manifest_list_with_snapshot() {
+        let analyzer = create_test_analyzer();
+        let metadata = json!({
+            "current-snapshot-id": 12345,
+            "snapshots": [
+                {
+                    "snapshot-id": 12345,
+                    "manifest-list": "s3://bucket/table/metadata/snap-12345-1-abc.avro"
+                }
+            ]
+        });
+
+        let result = analyzer.get_manifest_list(&metadata).await;
+
+        assert!(result.is_ok());
+        let manifests = result.unwrap();
+        assert_eq!(manifests.len(), 1);
+        assert_eq!(manifests[0], "s3://bucket/table/metadata/snap-12345-1-abc.avro");
+    }
+
+    #[tokio::test]
+    async fn test_get_manifest_list_no_current_snapshot() {
+        let analyzer = create_test_analyzer();
+        let metadata = json!({
+            "snapshots": [
+                {
+                    "snapshot-id": 12345,
+                    "manifest-list": "s3://bucket/table/metadata/snap-12345-1-abc.avro"
+                }
+            ]
+        });
+
+        let result = analyzer.get_manifest_list(&metadata).await;
+
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap().len(), 0);
+    }
+
+    #[tokio::test]
+    async fn test_get_manifest_list_snapshot_not_found() {
+        let analyzer = create_test_analyzer();
+        let metadata = json!({
+            "current-snapshot-id": 99999,
+            "snapshots": [
+                {
+                    "snapshot-id": 12345,
+                    "manifest-list": "s3://bucket/table/metadata/snap-12345-1-abc.avro"
+                }
+            ]
+        });
+
+        let result = analyzer.get_manifest_list(&metadata).await;
+
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap().len(), 0);
+    }
+
+    // Async tests for process_single_metadata_file
+    #[tokio::test]
+    async fn test_process_single_metadata_file_basic() {
+        let metadata_json = json!({
+            "format-version": 2,
+            "table-uuid": "test-uuid",
+            "schemas": [
+                {
+                    "schema-id": 0,
+                    "fields": [
+                        {"id": 1, "name": "id", "type": "long", "required": true},
+                        {"id": 2, "name": "name", "type": "string", "required": false}
+                    ]
+                }
+            ],
+            "partition-specs": [
+                {
+                    "spec-id": 0,
+                    "fields": [
+                        {"name": "date", "transform": "day", "source-id": 3}
+                    ]
+                }
+            ],
+            "snapshots": [
+                {
+                    "snapshot-id": 12345,
+                    "timestamp-ms": 1234567890000_u64,
+                    "summary": {
+                        "total-data-files": "10"
+                    }
+                }
+            ]
+        });
+
+        let json_bytes = serde_json::to_vec(&metadata_json).unwrap();
+        let mock_storage = Arc::new(MockStorageProvider::with_data(json_bytes));
+        let analyzer = IcebergAnalyzer::new(mock_storage, 4);
+
+        let result = analyzer.process_single_metadata_file("test.json", 0).await;
+
+        assert!(result.is_ok());
+        let metrics = result.unwrap();
+        assert_eq!(metrics.total_snapshots, 1);
+        assert_eq!(metrics.partition_columns.len(), 1);
+        assert_eq!(metrics.partition_columns[0], "date");
+        assert_eq!(metrics.schema_changes.len(), 1);
+        assert_eq!(metrics.total_constraints, 2);
+        assert_eq!(metrics.not_null_constraints, 1);
+    }
+
+    #[tokio::test]
+    async fn test_process_single_metadata_file_with_delete_files() {
+        let metadata_json = json!({
+            "format-version": 2,
+            "schemas": [
+                {
+                    "fields": [
+                        {"name": "id", "type": "long", "required": true}
+                    ]
+                }
+            ],
+            "snapshots": [
+                {
+                    "snapshot-id": 12345,
+                    "timestamp-ms": 1234567890000_u64,
+                    "summary": {
+                        "total-data-files": "10",
+                        "total-delete-files": "5"
+                    }
+                }
+            ]
+        });
+
+        let json_bytes = serde_json::to_vec(&metadata_json).unwrap();
+        let mock_storage = Arc::new(MockStorageProvider::with_data(json_bytes));
+        let analyzer = IcebergAnalyzer::new(mock_storage, 4);
+
+        let result = analyzer.process_single_metadata_file("test.json", 0).await;
+
+        assert!(result.is_ok());
+        let metrics = result.unwrap();
+        assert_eq!(metrics.delete_files_count, 5);
+    }
+
+    #[tokio::test]
+    async fn test_process_single_metadata_file_invalid_json() {
+        let invalid_json = b"not valid json".to_vec();
+        let mock_storage = Arc::new(MockStorageProvider::with_data(invalid_json));
+        let analyzer = IcebergAnalyzer::new(mock_storage, 4);
+
+        let result = analyzer.process_single_metadata_file("test.json", 0).await;
+
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_process_single_metadata_file_empty() {
+        let metadata_json = json!({});
+        let json_bytes = serde_json::to_vec(&metadata_json).unwrap();
+        let mock_storage = Arc::new(MockStorageProvider::with_data(json_bytes));
+        let analyzer = IcebergAnalyzer::new(mock_storage, 4);
+
+        let result = analyzer.process_single_metadata_file("test.json", 0).await;
+
+        assert!(result.is_ok());
+        let metrics = result.unwrap();
+        assert_eq!(metrics.total_snapshots, 0);
+        assert_eq!(metrics.schema_changes.len(), 0);
     }
 }
