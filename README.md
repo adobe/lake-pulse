@@ -1,7 +1,8 @@
 # Lake Pulse <img src=./rustacean-flat-happy.svg style="width: 40px" />
 
 ![Code Coverage](./badges/coverage.svg)
-![License](./badges/license.svg)
+![License Apache-2.0](badges/license-apache.svg)
+![License MIT](badges/license-mit.svg)
 ![Rust Version](./badges/rust-version.svg)
 ![Documentation](./badges/docs-passing.svg)
 
