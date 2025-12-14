@@ -1,19 +1,24 @@
 # Lake Pulse <img src=./rustacean-flat-happy.svg style="width: 40px" />
 
-![Code Coverage](./badges/coverage.svg)
-![License Apache-2.0](badges/license-apache.svg)
-![License MIT](badges/license-mit.svg)
-![Rust Version](./badges/rust-version.svg)
-![Documentation](./badges/docs-passing.svg)
+[![Coverage Status][coverage-badge]][coverage-link]
+[![License: MIT or Apache-2.0][license-badge]][license-link]
+[![Rust Version][version-badge]][version-link]
+[![Docs][docs-badge]][docs-link]
+[![Release][release-badge]][release-link]
 
-```
-    __          __           ____        __
-   / /   ____ _/ /_____     / __ \__  __/ /_______
-  / /   / __ `/ //_/ _ \   / /_/ / / / / / ___/ _ \
- / /___/ /_/ / ,< /  __/  / ____/ /_/ / (__  )  __/
-/_____/\__,_/_/|_|\___/  /_/    \__,_/_/____/\___/
+[coverage-badge]: https://img.shields.io/badge/coverage-73%25-green
+[coverage-link]: https://github.com/aionescu_adobe/lake-pulse/actions/workflows/rust.yml
+[license-badge]: https://img.shields.io/badge/license-MIT_or_Apache--2.0-blue
+[license-link]: ./LICENSE-APACHE
+[version-badge]: https://img.shields.io/badge/rust-1.88+-orange
+[version-link]: https://releases.rs/docs/1.88.0/
+[docs-badge]: https://img.shields.io/badge/docs-passing-green
+[docs-link]: https://docs.rs/lake_pulse/latest/lake_pulse/
+[release-badge]: https://img.shields.io/badge/release-v0.1.0-yellow
+[release-link]: https://github.com/aionescu_adobe/lake-pulse/releases/tag/v0.1.0
 
-```
+![Lake Pulse Logo](./lake-pulse-logo.svg)
+
 A Rust library for analyzing data lake table health across multiple formats (Delta Lake, Apache Iceberg, Apache Hudi, Lance) and storage providers (AWS S3, Azure Data Lake, GCS, Local).
 
 ## Supported Formats
@@ -23,13 +28,13 @@ A Rust library for analyzing data lake table health across multiple formats (Del
 [![Apache Hudi][hudi-badge]][hudi-link]
 [![Lance][lance-badge]][lance-link]
 
-[delta-badge]: ./badges/delta-lake.svg
+[delta-badge]: docs/badges/delta-lake.svg
 [delta-link]: https://github.com/delta-io/delta
-[iceberg-badge]: ./badges/apache-iceberg.svg
+[iceberg-badge]: docs/badges/apache-iceberg.svg
 [iceberg-link]: https://github.com/apache/iceberg
-[hudi-badge]: ./badges/apache-hudi.svg
+[hudi-badge]: docs/badges/apache-hudi.svg
 [hudi-link]: https://github.com/apache/hudi
-[lance-badge]: ./badges/lance.svg
+[lance-badge]: docs/badges/lance.svg
 [lance-link]: https://github.com/lancedb/lance
 
 ## Overview
