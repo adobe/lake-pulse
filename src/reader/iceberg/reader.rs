@@ -65,10 +65,10 @@ impl IcebergReader {
     /// # }
     /// ```
     pub async fn open(
-        metadata_location: &str,
+        table_location: &str,
         storage_options: &HashMap<String, String>,
     ) -> Result<Self, Box<dyn Error + Send + Sync>> {
-        info!("Opening Iceberg table from metadata: {}", metadata_location);
+        info!("Opening Iceberg table from location: {}", table_location);
 
         // Build FileIO with storage options
         let mut file_io_builder = FileIOBuilder::new_fs_io();
@@ -80,12 +80,18 @@ impl IcebergReader {
 
         let file_io = file_io_builder.build()?;
 
+        // Find the latest metadata file
+        // Iceberg tables store metadata in <table_location>/metadata/v<N>.metadata.json
+        // or use version-hint.text to point to the latest version
+        let metadata_location = Self::find_latest_metadata(&file_io, table_location).await?;
+        info!("Found latest metadata file: {}", metadata_location);
+
         // Create a table identifier (can be arbitrary for static tables)
         let table_ident = TableIdent::from_strs(["default", "table"])?;
 
         // Load table from metadata file
         let table =
-            StaticTable::from_metadata_file(metadata_location, table_ident, file_io).await?;
+            StaticTable::from_metadata_file(&metadata_location, table_ident, file_io).await?;
 
         info!(
             "Successfully opened Iceberg table from metadata, version: {}",
@@ -97,6 +103,53 @@ impl IcebergReader {
         );
 
         Ok(Self { table })
+    }
+
+    /// Find the latest metadata file for an Iceberg table.
+    ///
+    /// This method first tries to read the version-hint.text file to find the latest
+    /// version, then falls back to scanning the metadata directory for versioned
+    /// metadata files.
+    async fn find_latest_metadata(
+        file_io: &iceberg::io::FileIO,
+        table_location: &str,
+    ) -> Result<String, Box<dyn Error + Send + Sync>> {
+        let metadata_dir = format!("{}/metadata", table_location);
+
+        // First, try to read version-hint.text
+        let version_hint_path = format!("{}/version-hint.text", metadata_dir);
+        if let Ok(input_file) = file_io.new_input(&version_hint_path) {
+            if let Ok(content) = input_file.read().await {
+                let version_str = String::from_utf8_lossy(&content).trim().to_string();
+                if let Ok(version) = version_str.parse::<i32>() {
+                    let metadata_path = format!("{}/v{}.metadata.json", metadata_dir, version);
+                    info!(
+                        "Found version hint: {}, using metadata file: {}",
+                        version, metadata_path
+                    );
+                    return Ok(metadata_path);
+                }
+            }
+        }
+
+        // Fallback: scan for the highest versioned metadata file
+        // This is a simplified approach - in production, you might want to list files
+        // For now, try versions from high to low
+        for version in (1..=100).rev() {
+            let metadata_path = format!("{}/v{}.metadata.json", metadata_dir, version);
+            if let Ok(input_file) = file_io.new_input(&metadata_path) {
+                if input_file.read().await.is_ok() {
+                    info!("Found metadata file by scanning: {}", metadata_path);
+                    return Ok(metadata_path);
+                }
+            }
+        }
+
+        Err(format!(
+            "Could not find Iceberg metadata file in {}",
+            metadata_dir
+        )
+        .into())
     }
 
     /// Extract comprehensive metrics from the Iceberg table.
@@ -586,41 +639,20 @@ impl IcebergReader {
 mod tests {
     use super::*;
 
-    // Helper function to get the test iceberg table path
+    // Helper function to get the test iceberg table directory path
     fn get_test_iceberg_table_path() -> String {
         // Use the example iceberg dataset for testing
         let current_dir = std::env::current_dir().unwrap();
-        let test_path = current_dir.join("examples/data/iceberg_dataset/metadata");
-
-        // Find the latest metadata file
-        if let Ok(entries) = std::fs::read_dir(&test_path) {
-            let mut metadata_files: Vec<_> = entries
-                .filter_map(|e| e.ok())
-                .filter(|e| {
-                    e.file_name()
-                        .to_str()
-                        .map(|s| s.ends_with(".metadata.json"))
-                        .unwrap_or(false)
-                })
-                .collect();
-
-            metadata_files.sort_by_key(|e| e.file_name());
-
-            if let Some(latest) = metadata_files.last() {
-                return format!("file://{}", latest.path().to_str().unwrap());
-            }
-        }
-
-        // Fallback to a default path
-        format!("file://{}/v1.metadata.json", test_path.to_str().unwrap())
+        let test_path = current_dir.join("examples/data/iceberg_dataset");
+        format!("file://{}", test_path.to_str().unwrap())
     }
 
     #[tokio::test]
     async fn test_iceberg_reader_open_success() {
-        let metadata_location = get_test_iceberg_table_path();
+        let table_location = get_test_iceberg_table_path();
         let storage_options = HashMap::new();
 
-        let result = IcebergReader::open(&metadata_location, &storage_options).await;
+        let result = IcebergReader::open(&table_location, &storage_options).await;
 
         assert!(
             result.is_ok(),
@@ -631,10 +663,10 @@ mod tests {
 
     #[tokio::test]
     async fn test_iceberg_reader_open_invalid_path() {
-        let metadata_location = "file:///nonexistent/path/metadata.json";
+        let table_location = "file:///nonexistent/path/to/table";
         let storage_options = HashMap::new();
 
-        let result = IcebergReader::open(metadata_location, &storage_options).await;
+        let result = IcebergReader::open(table_location, &storage_options).await;
 
         assert!(
             result.is_err(),
@@ -643,11 +675,49 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_find_latest_metadata_with_version_hint() {
+        // The example iceberg_dataset has a version-hint.text file
+        let table_location = get_test_iceberg_table_path();
+
+        let file_io = FileIOBuilder::new_fs_io().build().unwrap();
+        let result = IcebergReader::find_latest_metadata(&file_io, &table_location).await;
+
+        assert!(
+            result.is_ok(),
+            "Failed to find latest metadata: {:?}",
+            result.err()
+        );
+
+        let metadata_path = result.unwrap();
+        assert!(
+            metadata_path.contains("/metadata/v"),
+            "Metadata path should contain /metadata/v"
+        );
+        assert!(
+            metadata_path.ends_with(".metadata.json"),
+            "Metadata path should end with .metadata.json"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_find_latest_metadata_invalid_path() {
+        let table_location = "file:///nonexistent/path/to/table";
+
+        let file_io = FileIOBuilder::new_fs_io().build().unwrap();
+        let result = IcebergReader::find_latest_metadata(&file_io, table_location).await;
+
+        assert!(
+            result.is_err(),
+            "Should fail to find metadata in non-existent path"
+        );
+    }
+
+    #[tokio::test]
     async fn test_iceberg_reader_extract_metrics_success() {
-        let metadata_location = get_test_iceberg_table_path();
+        let table_location = get_test_iceberg_table_path();
         let storage_options = HashMap::new();
 
-        let reader = IcebergReader::open(&metadata_location, &storage_options)
+        let reader = IcebergReader::open(&table_location, &storage_options)
             .await
             .expect("Failed to open Iceberg table");
 
@@ -678,10 +748,10 @@ mod tests {
 
     #[tokio::test]
     async fn test_iceberg_reader_extract_table_metadata() {
-        let metadata_location = get_test_iceberg_table_path();
+        let table_location = get_test_iceberg_table_path();
         let storage_options = HashMap::new();
 
-        let reader = IcebergReader::open(&metadata_location, &storage_options)
+        let reader = IcebergReader::open(&table_location, &storage_options)
             .await
             .expect("Failed to open Iceberg table");
 
@@ -701,10 +771,10 @@ mod tests {
 
     #[tokio::test]
     async fn test_iceberg_reader_extract_snapshot_metrics() {
-        let metadata_location = get_test_iceberg_table_path();
+        let table_location = get_test_iceberg_table_path();
         let storage_options = HashMap::new();
 
-        let reader = IcebergReader::open(&metadata_location, &storage_options)
+        let reader = IcebergReader::open(&table_location, &storage_options)
             .await
             .expect("Failed to open Iceberg table");
 
@@ -726,10 +796,10 @@ mod tests {
 
     #[tokio::test]
     async fn test_iceberg_reader_extract_schema_metrics() {
-        let metadata_location = get_test_iceberg_table_path();
+        let table_location = get_test_iceberg_table_path();
         let storage_options = HashMap::new();
 
-        let reader = IcebergReader::open(&metadata_location, &storage_options)
+        let reader = IcebergReader::open(&table_location, &storage_options)
             .await
             .expect("Failed to open Iceberg table");
 
@@ -755,10 +825,10 @@ mod tests {
 
     #[tokio::test]
     async fn test_iceberg_reader_extract_partition_spec_metrics() {
-        let metadata_location = get_test_iceberg_table_path();
+        let table_location = get_test_iceberg_table_path();
         let storage_options = HashMap::new();
 
-        let reader = IcebergReader::open(&metadata_location, &storage_options)
+        let reader = IcebergReader::open(&table_location, &storage_options)
             .await
             .expect("Failed to open Iceberg table");
 
@@ -785,10 +855,10 @@ mod tests {
 
     #[tokio::test]
     async fn test_iceberg_reader_extract_sort_order_metrics() {
-        let metadata_location = get_test_iceberg_table_path();
+        let table_location = get_test_iceberg_table_path();
         let storage_options = HashMap::new();
 
-        let reader = IcebergReader::open(&metadata_location, &storage_options)
+        let reader = IcebergReader::open(&table_location, &storage_options)
             .await
             .expect("Failed to open Iceberg table");
 
@@ -819,10 +889,10 @@ mod tests {
 
     #[tokio::test]
     async fn test_iceberg_reader_extract_file_statistics() {
-        let metadata_location = get_test_iceberg_table_path();
+        let table_location = get_test_iceberg_table_path();
         let storage_options = HashMap::new();
 
-        let reader = IcebergReader::open(&metadata_location, &storage_options)
+        let reader = IcebergReader::open(&table_location, &storage_options)
             .await
             .expect("Failed to open Iceberg table");
 
@@ -849,10 +919,10 @@ mod tests {
 
     #[tokio::test]
     async fn test_iceberg_reader_extract_manifest_statistics() {
-        let metadata_location = get_test_iceberg_table_path();
+        let table_location = get_test_iceberg_table_path();
         let storage_options = HashMap::new();
 
-        let reader = IcebergReader::open(&metadata_location, &storage_options)
+        let reader = IcebergReader::open(&table_location, &storage_options)
             .await
             .expect("Failed to open Iceberg table");
 
@@ -877,10 +947,10 @@ mod tests {
 
     #[tokio::test]
     async fn test_iceberg_reader_format_version() {
-        let metadata_location = get_test_iceberg_table_path();
+        let table_location = get_test_iceberg_table_path();
         let storage_options = HashMap::new();
 
-        let reader = IcebergReader::open(&metadata_location, &storage_options)
+        let reader = IcebergReader::open(&table_location, &storage_options)
             .await
             .expect("Failed to open Iceberg table");
 
@@ -899,10 +969,10 @@ mod tests {
 
     #[tokio::test]
     async fn test_iceberg_reader_table_uuid_format() {
-        let metadata_location = get_test_iceberg_table_path();
+        let table_location = get_test_iceberg_table_path();
         let storage_options = HashMap::new();
 
-        let reader = IcebergReader::open(&metadata_location, &storage_options)
+        let reader = IcebergReader::open(&table_location, &storage_options)
             .await
             .expect("Failed to open Iceberg table");
 
@@ -919,10 +989,10 @@ mod tests {
 
     #[tokio::test]
     async fn test_iceberg_reader_multiple_extractions() {
-        let metadata_location = get_test_iceberg_table_path();
+        let table_location = get_test_iceberg_table_path();
         let storage_options = HashMap::new();
 
-        let reader = IcebergReader::open(&metadata_location, &storage_options)
+        let reader = IcebergReader::open(&table_location, &storage_options)
             .await
             .expect("Failed to open Iceberg table");
 
@@ -948,10 +1018,10 @@ mod tests {
 
     #[tokio::test]
     async fn test_iceberg_reader_schema_json_validity() {
-        let metadata_location = get_test_iceberg_table_path();
+        let table_location = get_test_iceberg_table_path();
         let storage_options = HashMap::new();
 
-        let reader = IcebergReader::open(&metadata_location, &storage_options)
+        let reader = IcebergReader::open(&table_location, &storage_options)
             .await
             .expect("Failed to open Iceberg table");
 
@@ -971,10 +1041,10 @@ mod tests {
 
     #[tokio::test]
     async fn test_iceberg_reader_table_properties() {
-        let metadata_location = get_test_iceberg_table_path();
+        let table_location = get_test_iceberg_table_path();
         let storage_options = HashMap::new();
 
-        let reader = IcebergReader::open(&metadata_location, &storage_options)
+        let reader = IcebergReader::open(&table_location, &storage_options)
             .await
             .expect("Failed to open Iceberg table");
 
@@ -990,10 +1060,10 @@ mod tests {
 
     #[tokio::test]
     async fn test_iceberg_reader_snapshot_summary() {
-        let metadata_location = get_test_iceberg_table_path();
+        let table_location = get_test_iceberg_table_path();
         let storage_options = HashMap::new();
 
-        let reader = IcebergReader::open(&metadata_location, &storage_options)
+        let reader = IcebergReader::open(&table_location, &storage_options)
             .await
             .expect("Failed to open Iceberg table");
 
@@ -1012,10 +1082,10 @@ mod tests {
 
     #[tokio::test]
     async fn test_iceberg_reader_delete_files_metrics() {
-        let metadata_location = get_test_iceberg_table_path();
+        let table_location = get_test_iceberg_table_path();
         let storage_options = HashMap::new();
 
-        let reader = IcebergReader::open(&metadata_location, &storage_options)
+        let reader = IcebergReader::open(&table_location, &storage_options)
             .await
             .expect("Failed to open Iceberg table");
 
@@ -1034,13 +1104,13 @@ mod tests {
 
     #[tokio::test]
     async fn test_iceberg_reader_with_storage_options() {
-        let metadata_location = get_test_iceberg_table_path();
+        let table_location = get_test_iceberg_table_path();
         let mut storage_options = HashMap::new();
 
         // Add some storage options (these won't affect local file access)
         storage_options.insert("test_option".to_string(), "test_value".to_string());
 
-        let result = IcebergReader::open(&metadata_location, &storage_options).await;
+        let result = IcebergReader::open(&table_location, &storage_options).await;
 
         assert!(
             result.is_ok(),
@@ -1050,10 +1120,10 @@ mod tests {
 
     #[tokio::test]
     async fn test_iceberg_reader_sequence_numbers() {
-        let metadata_location = get_test_iceberg_table_path();
+        let table_location = get_test_iceberg_table_path();
         let storage_options = HashMap::new();
 
-        let reader = IcebergReader::open(&metadata_location, &storage_options)
+        let reader = IcebergReader::open(&table_location, &storage_options)
             .await
             .expect("Failed to open Iceberg table");
 
