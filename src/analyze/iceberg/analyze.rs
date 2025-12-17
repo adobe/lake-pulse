@@ -227,13 +227,12 @@ impl IcebergAnalyzer {
     /// ```
     pub async fn find_referenced_files(
         &self,
-        metadata_files: &Vec<FileMetadata>,
+        metadata_files: &[FileMetadata],
     ) -> Result<Vec<String>, Box<dyn Error + Send + Sync>> {
         let storage_provider = Arc::clone(&self.storage_provider);
-        let metadata_files_owned = metadata_files.clone();
 
         // Find the current metadata.json file (usually the one with highest version or named metadata.json)
-        let metadata_json_files: Vec<_> = metadata_files_owned
+        let metadata_json_files: Vec<_> = metadata_files
             .iter()
             .filter(|f| {
                 f.path.ends_with("metadata.json")
@@ -556,7 +555,7 @@ impl IcebergAnalyzer {
     /// ```
     pub async fn update_metrics_from_iceberg_metadata(
         &self,
-        metadata_files: &Vec<FileMetadata>,
+        metadata_files: &[FileMetadata],
         data_files_total_size: u64,
         data_files_total_files: usize,
         metrics: &mut HealthMetrics,
@@ -1362,14 +1361,14 @@ impl TableAnalyzer for IcebergAnalyzer {
 
     async fn find_referenced_files(
         &self,
-        metadata_files: &Vec<FileMetadata>,
+        metadata_files: &[FileMetadata],
     ) -> Result<Vec<String>, Box<dyn Error + Send + Sync>> {
         self.find_referenced_files(metadata_files).await
     }
 
     async fn update_metrics_from_metadata(
         &self,
-        metadata_files: &Vec<FileMetadata>,
+        metadata_files: &[FileMetadata],
         data_files_total_size: u64,
         data_files_total_files: usize,
         metrics: &mut HealthMetrics,
@@ -1470,7 +1469,7 @@ mod tests {
         }
 
         fn options(&self) -> &HashMap<String, String> {
-            self.options.get_or_init(|| HashMap::new())
+            self.options.get_or_init(HashMap::new)
         }
 
         fn clean_options(&self) -> HashMap<String, String> {
@@ -2333,7 +2332,8 @@ mod tests {
         let analyzer = create_test_analyzer();
         let sort_columns = vec!["date".to_string(), "user_id".to_string()];
 
-        let metrics = analyzer.calculate_file_compaction_metrics(100, 1024 * 1024 * 1024, &sort_columns);
+        let metrics =
+            analyzer.calculate_file_compaction_metrics(100, 1024 * 1024 * 1024, &sort_columns);
 
         assert!(metrics.z_order_opportunity);
         assert_eq!(metrics.z_order_columns, sort_columns);
@@ -2399,7 +2399,8 @@ mod tests {
         let now = chrono::Utc::now().timestamp() as u64;
         let oldest_timestamp = (now - 86400 * 30) * 1000; // 30 days ago in ms
 
-        let metrics = analyzer.calculate_deletion_vector_metrics(delete_count, oldest_timestamp, now * 1000);
+        let metrics =
+            analyzer.calculate_deletion_vector_metrics(delete_count, oldest_timestamp, now * 1000);
 
         assert_eq!(metrics.deletion_vector_count, 100);
         assert_eq!(metrics.total_deletion_vector_size_bytes, 100 * 1024); // 1KB per delete file
@@ -2415,7 +2416,8 @@ mod tests {
         let now = chrono::Utc::now().timestamp() as u64;
         let oldest_timestamp = (now - 86400 * 120) * 1000; // 120 days ago in ms
 
-        let metrics = analyzer.calculate_deletion_vector_metrics(delete_count, oldest_timestamp, now * 1000);
+        let metrics =
+            analyzer.calculate_deletion_vector_metrics(delete_count, oldest_timestamp, now * 1000);
 
         assert_eq!(metrics.deletion_vector_count, 500);
         assert!(metrics.deletion_vector_age_days > 100.0);
@@ -2644,14 +2646,12 @@ mod tests {
     #[test]
     fn test_calculate_schema_metrics_no_timestamps() {
         let analyzer = create_test_analyzer();
-        let changes = vec![
-            SchemaChange {
-                version: 1,
-                timestamp: 0, // No timestamp
-                schema: json!({"fields": [{"name": "id", "type": "long"}]}),
-                is_breaking: false,
-            },
-        ];
+        let changes = vec![SchemaChange {
+            version: 1,
+            timestamp: 0, // No timestamp
+            schema: json!({"fields": [{"name": "id", "type": "long"}]}),
+            is_breaking: false,
+        }];
 
         let result = analyzer.calculate_schema_metrics(changes, 1);
 
@@ -2691,7 +2691,10 @@ mod tests {
         assert!(result.is_ok());
         let manifests = result.unwrap();
         assert_eq!(manifests.len(), 1);
-        assert_eq!(manifests[0], "s3://bucket/table/metadata/snap-12345-1-abc.avro");
+        assert_eq!(
+            manifests[0],
+            "s3://bucket/table/metadata/snap-12345-1-abc.avro"
+        );
     }
 
     #[tokio::test]

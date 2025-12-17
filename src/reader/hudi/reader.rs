@@ -137,7 +137,7 @@ impl HudiReader {
         let table_name = self
             .table_path
             .split('/')
-            .last()
+            .next_back()
             .unwrap_or("unknown")
             .to_string();
 

@@ -78,7 +78,7 @@ pub trait TableAnalyzer: Send + Sync {
     /// * JSON/metadata parsing fails
     async fn find_referenced_files(
         &self,
-        metadata_files: &Vec<FileMetadata>,
+        metadata_files: &[FileMetadata],
     ) -> Result<Vec<String>, Box<dyn Error + Send + Sync>>;
 
     /// Update health metrics by analyzing metadata files.
@@ -111,7 +111,7 @@ pub trait TableAnalyzer: Send + Sync {
     /// * Parallel processing encounters errors
     async fn update_metrics_from_metadata(
         &self,
-        metadata_files: &Vec<FileMetadata>,
+        metadata_files: &[FileMetadata],
         data_files_total_size: u64,
         data_files_total_files: usize,
         metrics: &mut HealthMetrics,

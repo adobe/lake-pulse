@@ -23,7 +23,7 @@ use crate::reader::delta::reader::DeltaReader;
 use crate::reader::hudi::reader::HudiReader;
 use crate::reader::iceberg::reader::IcebergReader;
 use crate::storage::{FileMetadata, StorageConfig, StorageProvider, StorageProviderFactory};
-use crate::util::util::{
+use crate::util::helpers::{
     detect_table_type, measure_dur, measure_dur_async, measure_dur_with_error,
 };
 use std::collections::{HashMap, HashSet, LinkedList};
@@ -80,7 +80,7 @@ impl AnalyzerBuilder {
     /// # Examples
     ///
     /// ```no_run
-    /// use lake_pulse::analyze::analyze::AnalyzerBuilder;
+    /// use lake_pulse::analyze::analyzer::AnalyzerBuilder;
     /// use lake_pulse::storage::StorageConfig;
     ///
     /// let config = StorageConfig::local().with_option("path", "/data");
@@ -104,13 +104,12 @@ impl AnalyzerBuilder {
     /// The `AnalyzerBuilder` instance with updated parallelism setting (for method chaining).
     ///
     /// ```no_run
-    /// use lake_pulse::analyze::analyze::AnalyzerBuilder;
+    /// use lake_pulse::analyze::analyzer::AnalyzerBuilder;
     /// use lake_pulse::storage::StorageConfig;
     ///
     /// let config = StorageConfig::local().with_option("path", "/data");
     /// let builder = AnalyzerBuilder::new(config).with_parallelism(10);
     /// ```
-
     pub fn with_parallelism(mut self, parallelism: usize) -> Self {
         self.parallelism = Some(parallelism);
         self
@@ -388,7 +387,7 @@ impl Analyzer {
         .await?;
 
         metrics.total_files = data_files.len();
-        metrics.total_size_bytes = data_files.iter().map(|f| f.size as u64).sum();
+        metrics.total_size_bytes = data_files.iter().map(|f| f.size).sum();
 
         let referenced_set: HashSet<String> = referenced_files.into_iter().collect();
         let unreferenced_files = measure_dur(
@@ -400,8 +399,8 @@ impl Analyzer {
                     .filter(|f| !referenced_set.iter().any(|i| f.path.contains(i)))
                     .map(|f| FileInfo {
                         path: format!("{}/{}", self.storage_provider.base_path(), f.path),
-                        size_bytes: f.size as u64,
-                        last_modified: f.last_modified.clone().map(|m| m.to_rfc3339()),
+                        size_bytes: f.size,
+                        last_modified: f.last_modified.map(|m| m.to_rfc3339()),
                         is_referenced: false,
                     })
                     .collect::<Vec<FileInfo>>()
@@ -511,7 +510,7 @@ impl Analyzer {
             &mut internal_metrics,
             || async {
                 if let Some(file_compaction) = metrics.file_compaction.clone() {
-                    let z_order_opportunity = file_compaction.z_order_opportunity.clone();
+                    let z_order_opportunity = file_compaction.z_order_opportunity;
                     let z_order_columns = file_compaction.z_order_columns;
                     self.analyze_file_compaction(
                         &data_files,
@@ -652,7 +651,7 @@ impl Analyzer {
             table_type,
             analysis_timestamp: chrono::Utc::now().to_rfc3339(),
             metrics: metrics.clone(),
-            health_score: metrics.health_score.clone(),
+            health_score: metrics.health_score,
             timed_metrics: TimedLikeMetrics {
                 duration_collection: timed_metrics,
             },
@@ -699,11 +698,11 @@ impl Analyzer {
                     });
 
             partition_info.file_count += 1;
-            partition_info.total_size_bytes += file.size as u64;
+            partition_info.total_size_bytes += file.size;
             partition_info.files.push(FileInfo {
                 path: format!("{}/{}", self.storage_provider.base_path(), file.path),
-                size_bytes: file.size as u64,
-                last_modified: file.last_modified.clone().map(|m| m.to_rfc3339()),
+                size_bytes: file.size,
+                last_modified: file.last_modified.map(|m| m.to_rfc3339()),
                 is_referenced: true, // We'll update this later
             });
         }
@@ -761,11 +760,11 @@ impl Analyzer {
     /// * `f64` - Metadata growth rate (currently placeholder, returns 0.0)
     pub fn calculate_metadata_health(
         &self,
-        metadata_files: &Vec<FileMetadata>,
+        metadata_files: &[FileMetadata],
     ) -> (usize, u64, f64, f64) {
         let mut metadata_health: f64 = 0.0;
         let metadata_file_count = metadata_files.len();
-        let metadata_total_size_bytes: u64 = metadata_files.iter().map(|f| f.size as u64).sum();
+        let metadata_total_size_bytes: u64 = metadata_files.iter().map(|f| f.size).sum();
 
         if !metadata_files.is_empty() {
             metadata_health = metadata_total_size_bytes as f64 / metadata_files.len() as f64;
@@ -795,7 +794,7 @@ impl Analyzer {
 
         // Analyze file sizes for compaction opportunities
         for file in data_files {
-            let file_size = file.size as u64;
+            let file_size = file.size;
             if file_size < 16 * 1024 * 1024 {
                 // < 16MB
                 small_files_count += 1;
@@ -863,12 +862,12 @@ impl Analyzer {
         }
     }
 
-    fn calculate_recommended_target_size(&self, data_files: &Vec<FileMetadata>) -> u64 {
+    fn calculate_recommended_target_size(&self, data_files: &[FileMetadata]) -> u64 {
         if data_files.is_empty() {
             return 128 * 1024 * 1024; // 128MB default
         }
 
-        let total_size = data_files.iter().map(|f| f.size as u64).sum::<u64>();
+        let total_size = data_files.iter().map(|f| f.size).sum::<u64>();
         let avg_size = total_size as f64 / data_files.len() as f64;
 
         // Recommend target size based on current average
@@ -1037,7 +1036,7 @@ mod tests {
     fn test_calculate_file_size_distribution_small_files() {
         let analyzer = create_mock_analyzer();
         let files = vec![
-            create_file_metadata("file1.parquet", 1 * 1024 * 1024), // 1MB
+            create_file_metadata("file1.parquet", 1024 * 1024), // 1MB
             create_file_metadata("file2.parquet", 10 * 1024 * 1024), // 10MB
             create_file_metadata("file3.parquet", 15 * 1024 * 1024), // 15MB
         ];
