@@ -180,7 +180,7 @@ impl HudiAnalyzer {
     /// ```
     pub async fn find_referenced_files(
         &self,
-        _metadata_files: &Vec<FileMetadata>,
+        _metadata_files: &[FileMetadata],
     ) -> Result<Vec<String>, Box<dyn Error + Send + Sync>> {
         info!("Finding referenced files from Hudi metadata");
 
@@ -247,7 +247,7 @@ impl HudiAnalyzer {
     /// ```
     pub async fn update_metrics_from_hudi_metadata(
         &self,
-        _metadata_files: &Vec<FileMetadata>,
+        _metadata_files: &[FileMetadata],
         _data_files_total_size: u64,
         _data_files_total_files: usize,
         metrics: &mut HealthMetrics,
@@ -336,14 +336,14 @@ impl TableAnalyzer for HudiAnalyzer {
 
     async fn find_referenced_files(
         &self,
-        metadata_files: &Vec<FileMetadata>,
+        metadata_files: &[FileMetadata],
     ) -> Result<Vec<String>, Box<dyn Error + Send + Sync>> {
         self.find_referenced_files(metadata_files).await
     }
 
     async fn update_metrics_from_metadata(
         &self,
-        metadata_files: &Vec<FileMetadata>,
+        metadata_files: &[FileMetadata],
         data_files_total_size: u64,
         data_files_total_files: usize,
         metrics: &mut HealthMetrics,

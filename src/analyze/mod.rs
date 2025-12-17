@@ -30,7 +30,7 @@
 //! - [`hudi`] - Apache Hudi table analysis
 //! - [`lance`] - Lance table analysis
 
-pub mod analyze;
+pub mod analyzer;
 pub mod delta;
 pub mod hudi;
 pub mod iceberg;
@@ -38,4 +38,4 @@ pub mod lance;
 pub mod metrics;
 pub mod table_analyzer;
 
-pub use analyze::Analyzer;
+pub use analyzer::Analyzer;

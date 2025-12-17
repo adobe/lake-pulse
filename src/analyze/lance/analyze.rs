@@ -171,7 +171,7 @@ impl LanceAnalyzer {
     /// ```
     pub async fn find_referenced_files(
         &self,
-        metadata_files: &Vec<FileMetadata>,
+        metadata_files: &[FileMetadata],
     ) -> Result<Vec<String>, Box<dyn Error + Send + Sync>> {
         info!("Finding referenced files from Lance metadata");
 
@@ -294,7 +294,7 @@ impl LanceAnalyzer {
     /// ```
     pub async fn update_metrics_from_lance_metadata(
         &self,
-        metadata_files: &Vec<FileMetadata>,
+        metadata_files: &[FileMetadata],
         data_files_total_size: u64,
         data_files_total_files: usize,
         metrics: &mut HealthMetrics,
@@ -439,7 +439,7 @@ impl LanceAnalyzer {
         // Update metadata health
         metrics.metadata_health.metadata_total_size_bytes = metadata_total_size;
         metrics.metadata_health.metadata_file_count = metadata_files.len();
-        metrics.metadata_health.avg_metadata_file_size = if metadata_files.len() > 0 {
+        metrics.metadata_health.avg_metadata_file_size = if !metadata_files.is_empty() {
             metadata_total_size as f64 / metadata_files.len() as f64
         } else {
             0.0
@@ -464,14 +464,14 @@ impl TableAnalyzer for LanceAnalyzer {
 
     async fn find_referenced_files(
         &self,
-        metadata_files: &Vec<FileMetadata>,
+        metadata_files: &[FileMetadata],
     ) -> Result<Vec<String>, Box<dyn Error + Send + Sync>> {
         self.find_referenced_files(metadata_files).await
     }
 
     async fn update_metrics_from_metadata(
         &self,
-        metadata_files: &Vec<FileMetadata>,
+        metadata_files: &[FileMetadata],
         data_files_total_size: u64,
         data_files_total_files: usize,
         metrics: &mut HealthMetrics,

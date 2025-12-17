@@ -420,7 +420,7 @@ mod tests {
             }
 
             fn options(&self) -> &HashMap<String, String> {
-                self.options.get_or_init(|| HashMap::new())
+                self.options.get_or_init(HashMap::new)
             }
 
             fn clean_options(&self) -> HashMap<String, String> {
