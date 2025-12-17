@@ -1,0 +1,26 @@
+// Copyright 2025 Adobe. All rights reserved.
+// This file is licensed to you under the Apache License,
+// Version 2.0 (http://www.apache.org/licenses/LICENSE-2.0)
+// or the MIT license (http://opensource.org/licenses/MIT),
+// at your option.
+
+// Unless required by applicable law or agreed to in writing,
+// this software is distributed on an "AS IS" BASIS, WITHOUT
+// WARRANTIES OR REPRESENTATIONS OF ANY KIND, either express or
+// implied. See the LICENSE-MIT and LICENSE-APACHE files for the
+// specific language governing permissions and limitations under
+// each license.
+
+use lake_pulse::{Analyzer, StorageConfig};
+
+#[tokio::main]
+async fn main() {
+    let storage_config = StorageConfig::local().with_option("path", "./examples/data");
+    let analyzer = Analyzer::builder(storage_config).build().await.unwrap();
+
+    // Generate report
+    let report = analyzer.analyze("delta_dataset").await.unwrap();
+
+    // Print pretty report
+    println!("{}", report.to_json(true).unwrap());
+}
