@@ -17,7 +17,7 @@ use crate::analyze::metrics::{
 };
 use crate::analyze::table_analyzer::TableAnalyzer;
 use crate::storage::{FileMetadata, StorageProvider};
-use crate::util::util::is_ndjson;
+use crate::util::helpers::is_ndjson;
 use async_trait::async_trait;
 use bytes::Bytes;
 use chrono::Utc;
@@ -241,13 +241,12 @@ impl DeltaAnalyzer {
     /// ```
     pub async fn find_referenced_files(
         &self,
-        metadata_files: &Vec<FileMetadata>,
+        metadata_files: &[FileMetadata],
     ) -> Result<Vec<String>, Box<dyn Error + Send + Sync>> {
         let storage_provider = Arc::clone(&self.storage_provider);
         // TODO: For now, let's check only JSON files.
         //       In the future, we should also check checkpoints.
         let metadata_files_owned = metadata_files
-            .clone()
             .iter()
             .filter(|f| f.path.contains(".json"))
             .cloned()
@@ -556,8 +555,8 @@ impl DeltaAnalyzer {
 
         let selected_fields: Vec<_> = fields
             .iter()
+            .filter(|&f| f.name() == "metaData")
             .cloned()
-            .filter(|f| f.name() == "metaData")
             .collect();
 
         if selected_fields.is_empty() {
@@ -584,49 +583,47 @@ impl DeltaAnalyzer {
             // The checkpoint encodes actions as rows with a top-level column indicating the
             // action type. We are interested in rows where the `metaData` column is present
             // and non-null.
-            if let Some((_, field)) = row.get_column_iter().next() {
-                if let Field::Group(meta_group) = field {
-                    let mut schema: Option<Value> = None;
-                    let mut timestamp: u64 = 0;
+            if let Some((_, Field::Group(meta_group))) = row.get_column_iter().next() {
+                let mut schema: Option<Value> = None;
+                let mut timestamp: u64 = 0;
 
-                    for (meta_name, meta_field) in meta_group.get_column_iter() {
-                        match (meta_name.as_str(), meta_field) {
-                            ("schemaString", Field::Str(s)) => {
-                                if let Ok(parsed) = serde_json::from_str::<Value>(s) {
-                                    schema = Some(parsed);
-                                }
+                for (meta_name, meta_field) in meta_group.get_column_iter() {
+                    match (meta_name.as_str(), meta_field) {
+                        ("schemaString", Field::Str(s)) => {
+                            if let Ok(parsed) = serde_json::from_str::<Value>(s) {
+                                schema = Some(parsed);
                             }
-                            ("createdTime", Field::Long(v)) => {
-                                if *v > 0 {
-                                    timestamp = *v as u64;
-                                }
-                            }
-                            ("createdTime", Field::Int(v)) => {
-                                if *v > 0 {
-                                    timestamp = *v as u64;
-                                }
-                            }
-                            _ => {}
                         }
+                        ("createdTime", Field::Long(v)) => {
+                            if *v > 0 {
+                                timestamp = *v as u64;
+                            }
+                        }
+                        ("createdTime", Field::Int(v)) => {
+                            if *v > 0 {
+                                timestamp = *v as u64;
+                            }
+                        }
+                        _ => {}
                     }
+                }
 
-                    if let Some(schema) = schema {
-                        let constraints = self.extract_constraints_from_schema(&schema);
-                        result.total_constraints += constraints.0;
-                        result.check_constraints += constraints.1;
-                        result.not_null_constraints += constraints.2;
-                        result.unique_constraints += constraints.3;
-                        result.foreign_key_constraints += constraints.4;
+                if let Some(schema) = schema {
+                    let constraints = self.extract_constraints_from_schema(&schema);
+                    result.total_constraints += constraints.0;
+                    result.check_constraints += constraints.1;
+                    result.not_null_constraints += constraints.2;
+                    result.unique_constraints += constraints.3;
+                    result.foreign_key_constraints += constraints.4;
 
-                        let is_breaking = self.is_breaking_change(&result.schema_changes, &schema);
+                    let is_breaking = self.is_breaking_change(&result.schema_changes, &schema);
 
-                        result.schema_changes.push(SchemaChange {
-                            version,
-                            timestamp,
-                            schema,
-                            is_breaking,
-                        });
-                    }
+                    result.schema_changes.push(SchemaChange {
+                        version,
+                        timestamp,
+                        schema,
+                        is_breaking,
+                    });
                 }
             }
         }
@@ -813,7 +810,7 @@ impl DeltaAnalyzer {
     /// ```
     pub async fn update_metrics_from_delta_metadata(
         &self,
-        metadata_files: &Vec<FileMetadata>,
+        metadata_files: &[FileMetadata],
         data_files_total_size: u64,
         data_files_total_files: usize,
         metrics: &mut HealthMetrics,
@@ -1709,14 +1706,14 @@ impl TableAnalyzer for DeltaAnalyzer {
 
     async fn find_referenced_files(
         &self,
-        metadata_files: &Vec<FileMetadata>,
+        metadata_files: &[FileMetadata],
     ) -> Result<Vec<String>, Box<dyn Error + Send + Sync>> {
         self.find_referenced_files(metadata_files).await
     }
 
     async fn update_metrics_from_metadata(
         &self,
-        metadata_files: &Vec<FileMetadata>,
+        metadata_files: &[FileMetadata],
         data_files_total_size: u64,
         data_files_total_files: usize,
         metrics: &mut HealthMetrics,
@@ -1804,7 +1801,7 @@ mod tests {
         }
 
         fn options(&self) -> &HashMap<String, String> {
-            self.options.get_or_init(|| HashMap::new())
+            self.options.get_or_init(HashMap::new)
         }
 
         fn clean_options(&self) -> HashMap<String, String> {
@@ -1972,7 +1969,7 @@ mod tests {
         // Small count, small size, recent
         let impact = analyzer.calculate_deletion_vector_impact(5, 1024, 1.0);
 
-        assert!(impact >= 0.0 && impact <= 1.0);
+        assert!((0.0..=1.0).contains(&impact));
         assert!(impact < 0.5); // Should be low impact
     }
 
@@ -1982,7 +1979,7 @@ mod tests {
         // Large count, large size, old
         let impact = analyzer.calculate_deletion_vector_impact(1000, 100_000_000, 90.0);
 
-        assert!(impact >= 0.0 && impact <= 1.0);
+        assert!((0.0..=1.0).contains(&impact));
         assert!(impact > 0.5); // Should be high impact
     }
 
@@ -1992,7 +1989,7 @@ mod tests {
         // Extreme values should still be clamped to [0, 1]
         let impact = analyzer.calculate_deletion_vector_impact(10000, 1_000_000_000, 365.0);
 
-        assert!(impact >= 0.0 && impact <= 1.0);
+        assert!((0.0..=1.0).contains(&impact));
     }
 
     #[test]
@@ -2021,7 +2018,7 @@ mod tests {
         // Moderate changes, few breaking, low frequency, moderate time
         let score = analyzer.calculate_schema_stability_score(15, 2, 0.05, 10.0);
 
-        assert!(score >= 0.0 && score <= 1.0);
+        assert!((0.0..=1.0).contains(&score));
         assert!(score > 0.3 && score < 0.9); // Should be moderate
     }
 
@@ -2031,7 +2028,7 @@ mod tests {
         // Extreme values should be clamped
         let score = analyzer.calculate_schema_stability_score(1000, 500, 10.0, 0.1);
 
-        assert!(score >= 0.0 && score <= 1.0);
+        assert!((0.0..=1.0).contains(&score));
     }
 
     #[test]
@@ -2452,7 +2449,7 @@ mod tests {
         let analyzer = create_test_analyzer();
         let impact = analyzer.calculate_storage_cost_impact(0, 0, 0.0);
 
-        assert!(impact >= 0.0 && impact <= 1.0);
+        assert!((0.0..=1.0).contains(&impact));
     }
 
     #[test]
@@ -2461,7 +2458,7 @@ mod tests {
         // Small size, few snapshots, recent
         let impact = analyzer.calculate_storage_cost_impact(1_000_000, 5, 1.0);
 
-        assert!(impact >= 0.0 && impact <= 1.0);
+        assert!((0.0..=1.0).contains(&impact));
         assert!(impact < 0.5);
     }
 
@@ -2471,7 +2468,7 @@ mod tests {
         // Large size, many snapshots, old
         let impact = analyzer.calculate_storage_cost_impact(100_000_000_000, 1000, 365.0);
 
-        assert!(impact >= 0.0 && impact <= 1.0);
+        assert!((0.0..=1.0).contains(&impact));
         assert!(impact > 0.5);
     }
 
@@ -2481,7 +2478,7 @@ mod tests {
         // Few snapshots, recent data
         let efficiency = analyzer.calculate_retention_efficiency(10, 7.0, 1.0);
 
-        assert!(efficiency >= 0.0 && efficiency <= 1.0);
+        assert!((0.0..=1.0).contains(&efficiency));
         assert!(efficiency > 0.7); // Should be efficient
     }
 
@@ -2493,9 +2490,9 @@ mod tests {
         // Expected: 1.0 - 0.3 = 0.7
         let efficiency = analyzer.calculate_retention_efficiency(1000, 365.0, 1.0);
 
-        assert!(efficiency >= 0.0 && efficiency <= 1.0);
+        assert!((0.0..=1.0).contains(&efficiency));
         // With 1000 snapshots, efficiency is penalized by 0.3, so it's 0.7
-        assert!(efficiency >= 0.6 && efficiency <= 0.8);
+        assert!((0.6..=0.8).contains(&efficiency));
     }
 
     #[test]

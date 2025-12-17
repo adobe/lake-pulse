@@ -92,7 +92,9 @@ mod tests {
     fn test_storage_result_ok() {
         let result: StorageResult<i32> = Ok(42);
         assert!(result.is_ok());
-        assert_eq!(result.unwrap(), 42);
+        if let Ok(value) = result {
+            assert_eq!(value, 42);
+        }
     }
 
     #[test]
@@ -116,7 +118,7 @@ mod tests {
         let errors = vec![
             StorageError::ConfigError("config".to_string()),
             StorageError::ConnectionError("connection".to_string()),
-            StorageError::IoError(io::Error::new(io::ErrorKind::Other, "io")),
+            StorageError::IoError(io::Error::other("io")),
         ];
 
         assert_eq!(errors.len(), 3);

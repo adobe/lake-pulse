@@ -417,7 +417,7 @@ impl Display for HealthReport {
 
         // Key Metrics and File Size Distribution (side by side)
         writeln!(f)?;
-        writeln!(f, " {:<41} {}", "Key Metrics", "File Size Distribution")?;
+        writeln!(f, " {:<41} File Size Distribution", "Key Metrics")?;
         writeln!(f, "{}", "━".repeat(80))?;
 
         let dist = &report.metrics.file_size_distribution;
@@ -490,7 +490,7 @@ impl Display for HealthReport {
 
         // Data Skew Analysis and Metadata Health (side by side)
         writeln!(f)?;
-        writeln!(f, " {:<41} {}", "Data Skew Analysis", "Metadata Health")?;
+        writeln!(f, " {:<41} Metadata Health", "Data Skew Analysis")?;
         writeln!(f, "{}", "━".repeat(80))?;
 
         let skew = &report.metrics.data_skew;
@@ -581,7 +581,7 @@ impl Display for HealthReport {
 
         // Snapshot Health and Unreferenced Files (side by side)
         writeln!(f)?;
-        writeln!(f, " {:<41} {}", "Snapshot Health", "Unreferenced Files")?;
+        writeln!(f, " {:<41} Unreferenced Files", "Snapshot Health")?;
         writeln!(f, "{}", "━".repeat(80))?;
 
         let snap = &report.metrics.snapshot_health;
@@ -685,13 +685,7 @@ impl Display for HealthReport {
             )?;
             writeln!(f, "{}", "━".repeat(80))?;
 
-            let max_rows = if has_clustering && has_deletion_vectors {
-                4
-            } else if has_clustering {
-                4
-            } else {
-                5
-            };
+            let max_rows = if has_clustering { 4 } else { 5 };
 
             for i in 0..max_rows {
                 let left = if has_clustering {
@@ -2183,7 +2177,7 @@ mod tests {
         let score = metrics.calculate_health_score();
 
         assert!(
-            score >= 0.9 && score <= 1.0,
+            (0.9..=1.0).contains(&score),
             "Perfect health should score high"
         );
     }
@@ -2206,7 +2200,7 @@ mod tests {
 
         // Should be penalized by 30% * 0.3 = 0.09
         assert!(score < 1.0);
-        assert!(score >= 0.85 && score <= 0.95);
+        assert!((0.85..=0.95).contains(&score));
     }
 
     #[test]
@@ -2219,7 +2213,7 @@ mod tests {
 
         // Should be penalized by 60% * 0.2 = 0.12
         assert!(score < 1.0);
-        assert!(score >= 0.8 && score <= 0.9);
+        assert!((0.8..=0.9).contains(&score));
     }
 
     #[test]
@@ -2231,7 +2225,7 @@ mod tests {
         let score = metrics.calculate_health_score();
 
         // Should be penalized by 20% * 0.1 = 0.02
-        assert!(score >= 0.95 && score <= 1.0);
+        assert!((0.95..=1.0).contains(&score));
     }
 
     #[test]
@@ -2243,7 +2237,7 @@ mod tests {
         let score = metrics.calculate_health_score();
 
         // Should be penalized by 0.8 * 0.15 + 0.6 * 0.1 = 0.12 + 0.06 = 0.18
-        assert!(score >= 0.75 && score <= 0.85);
+        assert!((0.75..=0.85).contains(&score));
     }
 
     #[test]
@@ -2267,7 +2261,7 @@ mod tests {
         let score = metrics.calculate_health_score();
 
         // Score should be clamped to [0.0, 1.0]
-        assert!(score >= 0.0 && score <= 1.0);
+        assert!((0.0..=1.0).contains(&score));
     }
 
     #[test]

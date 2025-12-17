@@ -32,7 +32,7 @@ pub fn is_ndjson(content: &str) -> bool {
         })
 }
 
-pub fn detect_table_type(objects: &Vec<FileMetadata>) -> String {
+pub fn detect_table_type(objects: &[FileMetadata]) -> String {
     // Check for Lance: look for _versions directory and .lance files
     // Lance tables have a _versions directory and data stored in .lance files
     let has_versions_dir = objects.iter().any(|f| f.path.contains("/_versions/"));
@@ -44,29 +44,20 @@ pub fn detect_table_type(objects: &Vec<FileMetadata>) -> String {
     }
 
     // Check for Delta Lake: look for _delta_log directory
-    if objects
-        .into_iter()
-        .find(|f| f.path.contains("_delta_log"))
-        .is_some()
-    {
+    if objects.iter().any(|f| f.path.contains("_delta_log")) {
         return "delta".to_string();
     }
 
     // Check for Iceberg: look for metadata directory with .metadata.json files
     if objects
-        .into_iter()
-        .find(|f| f.path.contains("/metadata/") && f.path.ends_with(".metadata.json"))
-        .is_some()
+        .iter()
+        .any(|f| f.path.contains("/metadata/") && f.path.ends_with(".metadata.json"))
     {
         return "iceberg".to_string();
     }
 
     // Check for Hudi: look for .hoodie directory
-    if objects
-        .into_iter()
-        .find(|f| f.path.contains("/.hoodie/"))
-        .is_some()
-    {
+    if objects.iter().any(|f| f.path.contains("/.hoodie/")) {
         return "hudi".to_string();
     }
 

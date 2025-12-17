@@ -19,8 +19,8 @@
 //!
 //! - [`ascii_gantt`] - ASCII Gantt chart visualization for timing metrics
 //! - [`retry`] - Retry logic for resilient operations
-//! - [`util`] - General utility functions
+//! - [`helpers`] - General utility functions
 
 pub mod ascii_gantt;
+pub mod helpers;
 pub mod retry;
-pub mod util;

@@ -156,42 +156,25 @@ impl ObjectStoreProvider {
         if let Some(timeout_str) = config.options.get("timeout") {
             if timeout_str == "0" || timeout_str == "disabled" {
                 client_options = client_options.with_timeout_disabled();
-            } else {
-                match timeout_str.parse::<u64>() {
-                    Ok(sec) => {
-                        client_options = client_options.with_timeout(Duration::from_secs(sec))
-                    }
-                    Err(_) => (),
-                }
+            } else if let Ok(sec) = timeout_str.parse::<u64>() {
+                client_options = client_options.with_timeout(Duration::from_secs(sec))
             }
         };
         if let Some(connect_timeout_str) = config.options.get("connect_timeout") {
             if connect_timeout_str == "0" || connect_timeout_str == "disabled" {
                 client_options = client_options.with_connect_timeout_disabled();
-            } else {
-                match connect_timeout_str.parse::<u64>() {
-                    Ok(ms) => {
-                        client_options =
-                            client_options.with_connect_timeout(Duration::from_secs(ms))
-                    }
-                    Err(_) => (),
-                }
+            } else if let Ok(ms) = connect_timeout_str.parse::<u64>() {
+                client_options = client_options.with_connect_timeout(Duration::from_secs(ms))
             }
         }
         if let Some(pool_idle_timeout_str) = config.options.get("pool_idle_timeout") {
-            match pool_idle_timeout_str.parse::<u64>() {
-                Ok(sec) => {
-                    client_options = client_options.with_pool_idle_timeout(Duration::from_secs(sec))
-                }
-                Err(_) => (),
+            if let Ok(sec) = pool_idle_timeout_str.parse::<u64>() {
+                client_options = client_options.with_pool_idle_timeout(Duration::from_secs(sec))
             }
         }
         if let Some(pool_max_idle_per_host_str) = config.options.get("pool_max_idle_per_host") {
-            match pool_max_idle_per_host_str.parse::<usize>() {
-                Ok(max_idle) => {
-                    client_options = client_options.with_pool_max_idle_per_host(max_idle)
-                }
-                Err(_) => (),
+            if let Ok(max_idle) = pool_max_idle_per_host_str.parse::<usize>() {
+                client_options = client_options.with_pool_max_idle_per_host(max_idle)
             }
         }
         client_options
@@ -333,7 +316,7 @@ impl ObjectStoreProvider {
         // Construct base URL
         let base_url = if let Some(endpoint_url) = endpoint {
             // If custom endpoint is provided, use it
-            format!("{}", endpoint_url.trim_end_matches('/'))
+            endpoint_url.trim_end_matches('/').to_string()
         } else if let Some(bucket_name) = bucket {
             // Standard S3 URL format
             format!("s3://{}", bucket_name)
@@ -442,7 +425,7 @@ impl ObjectStoreProvider {
         // Format: abfss://<container>@<account>.<endpoint>/
         let base_url = if let Some(endpoint) = custom_endpoint {
             // If custom endpoint is provided, use it
-            format!("{}", endpoint.trim_end_matches('/'))
+            endpoint.trim_end_matches('/').to_string()
         } else {
             // Determine the endpoint based on configuration
             let endpoint_domain = if use_fabric_endpoint {
@@ -574,7 +557,7 @@ impl ObjectStoreProvider {
                                 let meta = meta?;
                                 files.push(FileMetadata {
                                     path: meta.location.to_string(),
-                                    size: meta.size as u64,
+                                    size: meta.size,
                                     last_modified: Some(meta.last_modified),
                                 });
                             }
@@ -663,7 +646,7 @@ impl StorageProvider for ObjectStoreProvider {
                     let meta = meta?;
                     files.push(FileMetadata {
                         path: meta.location.to_string(),
-                        size: meta.size as u64,
+                        size: meta.size,
                         last_modified: Some(meta.last_modified),
                     });
                 }
@@ -673,7 +656,7 @@ impl StorageProvider for ObjectStoreProvider {
                 for meta in list_result.objects {
                     files.push(FileMetadata {
                         path: meta.location.to_string(),
-                        size: meta.size as u64,
+                        size: meta.size,
                         last_modified: Some(meta.last_modified),
                     });
                 }
@@ -741,7 +724,7 @@ impl StorageProvider for ObjectStoreProvider {
                     .into_iter()
                     .map(|meta| FileMetadata {
                         path: meta.location.to_string(),
-                        size: meta.size as u64,
+                        size: meta.size,
                         last_modified: Some(meta.last_modified),
                     })
                     .collect();
@@ -786,7 +769,7 @@ impl StorageProvider for ObjectStoreProvider {
                             let meta = meta?;
                             files.push(FileMetadata {
                                 path: meta.location.to_string(),
-                                size: meta.size as u64,
+                                size: meta.size,
                                 last_modified: Some(meta.last_modified),
                             });
                         }
@@ -845,7 +828,7 @@ impl StorageProvider for ObjectStoreProvider {
             .clone()
             .into_iter()
             .filter(|(k, _)| {
-                !vec![
+                ![
                     "retry_timeout",
                     "timeout",
                     "connect_timeout",
@@ -899,10 +882,7 @@ mod tests {
     fn test_build_connection_options_default() {
         let config = StorageConfig::local();
         let _options = ObjectStoreProvider::build_connection_options(&config);
-
-        // Default options should be set
-        // We can't directly inspect ClientOptions, but we can verify it doesn't panic
-        assert!(true);
+        // No assertion, just make sure is does not panic
     }
 
     #[test]
@@ -912,8 +892,7 @@ mod tests {
             .with_option("connect_timeout", "10");
 
         let _options = ObjectStoreProvider::build_connection_options(&config);
-        // Verify it builds without panicking
-        assert!(true);
+        // No assertion, just make sure is does not panic
     }
 
     #[test]
@@ -923,7 +902,7 @@ mod tests {
             .with_option("connect_timeout", "0");
 
         let _options = ObjectStoreProvider::build_connection_options(&config);
-        assert!(true);
+        // No assertion, just make sure is does not panic
     }
 
     #[test]
@@ -933,7 +912,7 @@ mod tests {
             .with_option("pool_max_idle_per_host", "10");
 
         let _options = ObjectStoreProvider::build_connection_options(&config);
-        assert!(true);
+        // No assertion, just make sure is does not panic
     }
 
     #[test]
@@ -944,7 +923,7 @@ mod tests {
 
         // Should handle invalid values gracefully
         let _options = ObjectStoreProvider::build_connection_options(&config);
-        assert!(true);
+        // No assertion, just make sure is does not panic
     }
 
     #[test]
