@@ -16,8 +16,26 @@ name: CI
 on:
   push:
     branches: [ main ]
+    paths-ignore:
+      - '**.md'
+      - 'docs/**'
+      - 'LICENSE-*'
+      - '.gitignore'
+      - '*.svg'
+      - '*.png'
+      - '*.jpg'
+      - '*.gif'
   pull_request:
     branches: [ main ]
+    paths-ignore:
+      - '**.md'
+      - 'docs/**'
+      - 'LICENSE-*'
+      - '.gitignore'
+      - '*.svg'
+      - '*.png'
+      - '*.jpg'
+      - '*.gif'
 
 # Concurrency strategy:
 #   github.workflow: distinguish this workflow from others
