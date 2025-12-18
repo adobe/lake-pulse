@@ -66,7 +66,26 @@ mod tests {
 
         assert!(result.is_ok());
         let provider = result.unwrap();
-        assert!(provider.base_path().contains(temp_path));
+        // On Windows, canonicalize() adds \\?\ prefix and converts 8.3 short names to long names
+        // (e.g., RUNNER~1 -> runneradmin), so we need to canonicalize both paths for comparison
+        let base_path = provider
+            .base_path()
+            .replace("\\\\?\\", "")
+            .replace('\\', "/");
+        let canonical_temp = temp_dir
+            .path()
+            .canonicalize()
+            .unwrap()
+            .to_str()
+            .unwrap()
+            .replace("\\\\?\\", "")
+            .replace('\\', "/");
+        assert!(
+            base_path.contains(&canonical_temp),
+            "base_path '{}' should contain '{}'",
+            base_path,
+            canonical_temp
+        );
     }
 
     #[tokio::test]
