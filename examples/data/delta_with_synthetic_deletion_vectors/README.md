@@ -49,7 +49,7 @@ This synthetic dataset solves that problem by providing a **deterministic, contr
 ### Deletion Vector Files
 
 - `deletion_vector_vw@~5&4S8{+Jm!pP-Ad.bin`: Used by transaction 2
-- `deletion_vector_xy#~6%5T9|,Kn"qQ.Be.bin`: Used by transaction 3
+- `deletion_vector_xy0~605T90,Kn0qQ.Be.bin`: Used by transaction 3
 
 ## Expected Metrics
 
