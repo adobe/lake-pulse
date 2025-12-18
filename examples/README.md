@@ -7,6 +7,8 @@ This is a folder where some examples are provided to understand the use of the l
 Some tables need to be created, some are easy to create, some are not. The `data/README.md` file
 contains instructions on how to create the tables.
 
+For Azure ADLS and AWS S3 storage examples you will need to provide the needed credentials.
+
 ## Run the Examples
 
 To run the examples, you need to have `cargo` installed. Then, you can run the examples as follows:
