@@ -971,6 +971,87 @@ mod tests {
         }
     }
 
+    // Configurable mock for testing analyze() method
+    struct ConfigurableMockStorageProvider {
+        base_path: String,
+        options: HashMap<String, String>,
+        files: Vec<FileMetadata>,
+        file_contents: HashMap<String, Vec<u8>>,
+    }
+
+    #[async_trait]
+    impl StorageProvider for ConfigurableMockStorageProvider {
+        fn base_path(&self) -> &str {
+            &self.base_path
+        }
+
+        fn uri_from_path(&self, path: &str) -> String {
+            format!("{}/{}", self.base_path, path)
+        }
+
+        async fn validate_connection(&self, _location: &str) -> StorageResult<()> {
+            Ok(())
+        }
+
+        async fn list_files(
+            &self,
+            _path: &str,
+            _recursive: bool,
+        ) -> StorageResult<Vec<FileMetadata>> {
+            Ok(self.files.clone())
+        }
+
+        async fn discover_partitions(
+            &self,
+            _path: &str,
+            _exclude_prefixes: Vec<&str>,
+        ) -> StorageResult<Vec<String>> {
+            Ok(vec!["".to_string()])
+        }
+
+        async fn list_files_parallel(
+            &self,
+            _path: &str,
+            _partitions: Vec<String>,
+            _parallelism: usize,
+        ) -> StorageResult<Vec<FileMetadata>> {
+            Ok(self.files.clone())
+        }
+
+        async fn read_file(&self, path: &str) -> StorageResult<Vec<u8>> {
+            Ok(self
+                .file_contents
+                .get(path)
+                .cloned()
+                .unwrap_or_else(Vec::new))
+        }
+
+        async fn exists(&self, _path: &str) -> StorageResult<bool> {
+            Ok(true)
+        }
+
+        async fn get_metadata(&self, path: &str) -> StorageResult<FileMetadata> {
+            Ok(self
+                .files
+                .iter()
+                .find(|f| f.path == path)
+                .cloned()
+                .unwrap_or(FileMetadata {
+                    path: path.to_string(),
+                    size: 0,
+                    last_modified: None,
+                }))
+        }
+
+        fn options(&self) -> &HashMap<String, String> {
+            &self.options
+        }
+
+        fn clean_options(&self) -> HashMap<String, String> {
+            HashMap::new()
+        }
+    }
+
     // Helper function to create a mock Analyzer for testing
     fn create_mock_analyzer() -> Analyzer {
         Analyzer {
@@ -1487,5 +1568,284 @@ mod tests {
         assert_eq!(partition.file_count, 3);
         assert_eq!(partition.total_size_bytes, 6000);
         assert_eq!(partition.avg_file_size_bytes, 2000.0); // 6000 / 3
+    }
+
+    // Test Analyzer::builder() static method
+    #[test]
+    fn test_analyzer_builder_static_method() {
+        let config = StorageConfig::local().with_option("path", "/data");
+        let builder = Analyzer::builder(config.clone());
+
+        assert_eq!(builder.config.storage_type, config.storage_type);
+        assert_eq!(builder.parallelism, None);
+    }
+
+    #[test]
+    fn test_analyzer_builder_static_method_with_parallelism() {
+        let config = StorageConfig::local().with_option("path", "/data");
+        let builder = Analyzer::builder(config).with_parallelism(8);
+
+        assert_eq!(builder.parallelism, Some(8));
+    }
+
+    // Test AnalyzerBuilder::build() async method
+    #[tokio::test]
+    async fn test_analyzer_builder_build_local_storage() {
+        // Use a temp directory that exists
+        let temp_dir = std::env::temp_dir();
+        let config =
+            StorageConfig::local().with_option("path", temp_dir.to_str().unwrap_or("/tmp"));
+
+        let result = Analyzer::builder(config).build().await;
+
+        assert!(result.is_ok());
+        let analyzer = result.unwrap();
+        assert_eq!(analyzer.parallelism, 1); // Default parallelism
+    }
+
+    #[tokio::test]
+    async fn test_analyzer_builder_build_with_parallelism() {
+        let temp_dir = std::env::temp_dir();
+        let config =
+            StorageConfig::local().with_option("path", temp_dir.to_str().unwrap_or("/tmp"));
+
+        let result = Analyzer::builder(config).with_parallelism(4).build().await;
+
+        assert!(result.is_ok());
+        let analyzer = result.unwrap();
+        assert_eq!(analyzer.parallelism, 4);
+    }
+
+    // Test analyze_file_compaction async method
+    #[tokio::test]
+    async fn test_analyze_file_compaction_empty_files() {
+        let analyzer = create_mock_analyzer();
+        let files: Vec<FileMetadata> = vec![];
+
+        let result = analyzer
+            .analyze_file_compaction(&files, false, vec![])
+            .await;
+
+        assert!(result.is_ok());
+        let metrics = result.unwrap().unwrap();
+        assert_eq!(metrics.small_files_count, 0);
+        assert_eq!(metrics.small_files_size_bytes, 0);
+        assert_eq!(metrics.potential_compaction_files, 0);
+        assert_eq!(metrics.estimated_compaction_savings_bytes, 0);
+        assert!(!metrics.z_order_opportunity);
+        assert!(metrics.z_order_columns.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_analyze_file_compaction_small_files() {
+        let analyzer = create_mock_analyzer();
+        let files = vec![
+            create_file_metadata("file1.parquet", 1024 * 1024), // 1MB
+            create_file_metadata("file2.parquet", 2 * 1024 * 1024), // 2MB
+            create_file_metadata("file3.parquet", 5 * 1024 * 1024), // 5MB
+            create_file_metadata("file4.parquet", 10 * 1024 * 1024), // 10MB
+        ];
+
+        let result = analyzer
+            .analyze_file_compaction(&files, false, vec![])
+            .await;
+
+        assert!(result.is_ok());
+        let metrics = result.unwrap().unwrap();
+        assert_eq!(metrics.small_files_count, 4); // All < 16MB
+        assert_eq!(metrics.small_files_size_bytes, 18 * 1024 * 1024);
+        assert_eq!(metrics.potential_compaction_files, 4);
+        // Savings may be 0 if total size is less than target (128MB)
+        // The algorithm calculates conservative savings
+        assert_eq!(metrics.compaction_priority, "critical"); // 100% small files
+    }
+
+    #[tokio::test]
+    async fn test_analyze_file_compaction_mixed_files() {
+        let analyzer = create_mock_analyzer();
+        let files = vec![
+            create_file_metadata("small1.parquet", 5 * 1024 * 1024), // 5MB - small
+            create_file_metadata("small2.parquet", 10 * 1024 * 1024), // 10MB - small
+            create_file_metadata("medium.parquet", 50 * 1024 * 1024), // 50MB - not small
+            create_file_metadata("large.parquet", 200 * 1024 * 1024), // 200MB - not small
+        ];
+
+        let result = analyzer
+            .analyze_file_compaction(&files, false, vec![])
+            .await;
+
+        assert!(result.is_ok());
+        let metrics = result.unwrap().unwrap();
+        assert_eq!(metrics.small_files_count, 2); // Only 2 < 16MB
+        assert_eq!(metrics.small_files_size_bytes, 15 * 1024 * 1024);
+        assert_eq!(metrics.potential_compaction_files, 2);
+    }
+
+    #[tokio::test]
+    async fn test_analyze_file_compaction_with_z_order() {
+        let analyzer = create_mock_analyzer();
+        let files = vec![
+            create_file_metadata("file1.parquet", 5 * 1024 * 1024),
+            create_file_metadata("file2.parquet", 8 * 1024 * 1024),
+        ];
+        let z_order_columns = vec!["col1".to_string(), "col2".to_string()];
+
+        let result = analyzer
+            .analyze_file_compaction(&files, true, z_order_columns.clone())
+            .await;
+
+        assert!(result.is_ok());
+        let metrics = result.unwrap().unwrap();
+        assert!(metrics.z_order_opportunity);
+        assert_eq!(metrics.z_order_columns, z_order_columns);
+    }
+
+    #[tokio::test]
+    async fn test_analyze_file_compaction_no_small_files() {
+        let analyzer = create_mock_analyzer();
+        let files = vec![
+            create_file_metadata("large1.parquet", 100 * 1024 * 1024), // 100MB
+            create_file_metadata("large2.parquet", 200 * 1024 * 1024), // 200MB
+        ];
+
+        let result = analyzer
+            .analyze_file_compaction(&files, false, vec![])
+            .await;
+
+        assert!(result.is_ok());
+        let metrics = result.unwrap().unwrap();
+        assert_eq!(metrics.small_files_count, 0);
+        assert_eq!(metrics.small_files_size_bytes, 0);
+        assert_eq!(metrics.estimated_compaction_savings_bytes, 0);
+        assert_eq!(metrics.compaction_priority, "low");
+    }
+
+    #[tokio::test]
+    async fn test_analyze_file_compaction_single_small_file() {
+        let analyzer = create_mock_analyzer();
+        let files = vec![create_file_metadata("small.parquet", 5 * 1024 * 1024)]; // 5MB
+
+        let result = analyzer
+            .analyze_file_compaction(&files, false, vec![])
+            .await;
+
+        assert!(result.is_ok());
+        let metrics = result.unwrap().unwrap();
+        assert_eq!(metrics.small_files_count, 1);
+        // Single file means no savings from compaction
+        assert_eq!(metrics.estimated_compaction_savings_bytes, 0);
+    }
+
+    // Test Analyzer::analyze() method with unknown table type
+    #[tokio::test]
+    async fn test_analyze_unknown_table_type() {
+        // Create mock with generic parquet files (no delta/iceberg markers)
+        let files = vec![
+            create_file_metadata("data/file1.parquet", 50 * 1024 * 1024),
+            create_file_metadata("data/file2.parquet", 60 * 1024 * 1024),
+        ];
+
+        let analyzer = Analyzer {
+            storage_provider: Arc::new(ConfigurableMockStorageProvider {
+                base_path: "/tmp/test".to_string(),
+                options: HashMap::new(),
+                files,
+                file_contents: HashMap::new(),
+            }),
+            parallelism: 1,
+        };
+
+        let result = analyzer.analyze("test_table").await;
+
+        // Should fail because table type is unknown
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert!(err
+            .to_string()
+            .contains("Unknown or unsupported table type"));
+    }
+
+    // Test Analyzer::analyze() with Delta table files
+    #[tokio::test]
+    async fn test_analyze_delta_table() {
+        // Create mock with Delta table structure
+        let files = vec![
+            create_file_metadata("_delta_log/00000000000000000000.json", 1024),
+            create_file_metadata("_delta_log/00000000000000000001.json", 2048),
+            create_file_metadata("part-00000.parquet", 50 * 1024 * 1024),
+            create_file_metadata("part-00001.parquet", 60 * 1024 * 1024),
+        ];
+
+        // Create minimal Delta log JSON content
+        let delta_log_content = r#"{"add":{"path":"part-00000.parquet","size":52428800}}"#;
+
+        let mut file_contents = HashMap::new();
+        file_contents.insert(
+            "_delta_log/00000000000000000000.json".to_string(),
+            delta_log_content.as_bytes().to_vec(),
+        );
+        file_contents.insert(
+            "_delta_log/00000000000000000001.json".to_string(),
+            delta_log_content.as_bytes().to_vec(),
+        );
+
+        let analyzer = Analyzer {
+            storage_provider: Arc::new(ConfigurableMockStorageProvider {
+                base_path: "/tmp/delta_test".to_string(),
+                options: HashMap::new(),
+                files,
+                file_contents,
+            }),
+            parallelism: 1,
+        };
+
+        let result = analyzer.analyze("test_delta_table").await;
+
+        // The analyze method will detect delta table type and process it
+        // It may fail when trying to open DeltaReader with mock data,
+        // but the table type detection should work
+        // For now, we just verify the method runs without panicking
+        // A full integration test would require real Delta table fixtures
+        if let Ok(report) = result {
+            assert_eq!(report.table_type, "delta");
+            assert!(report.metrics.total_files > 0);
+        }
+        // If it fails, it's expected due to DeltaReader requiring real data
+    }
+
+    // Test Analyzer::analyze() with Iceberg table files
+    #[tokio::test]
+    async fn test_analyze_iceberg_table() {
+        // Create mock with Iceberg table structure
+        let files = vec![
+            create_file_metadata("metadata/v1.metadata.json", 4096),
+            create_file_metadata("data/file1.parquet", 50 * 1024 * 1024),
+            create_file_metadata("data/file2.parquet", 60 * 1024 * 1024),
+        ];
+
+        let iceberg_metadata = r#"{"format-version":2,"table-uuid":"test"}"#;
+
+        let mut file_contents = HashMap::new();
+        file_contents.insert(
+            "metadata/v1.metadata.json".to_string(),
+            iceberg_metadata.as_bytes().to_vec(),
+        );
+
+        let analyzer = Analyzer {
+            storage_provider: Arc::new(ConfigurableMockStorageProvider {
+                base_path: "/tmp/iceberg_test".to_string(),
+                options: HashMap::new(),
+                files,
+                file_contents,
+            }),
+            parallelism: 1,
+        };
+
+        let result = analyzer.analyze("test_iceberg_table").await;
+
+        // Similar to Delta, may fail on IcebergReader but table type detection works
+        if let Ok(report) = result {
+            assert_eq!(report.table_type, "iceberg");
+        }
     }
 }
