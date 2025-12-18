@@ -2586,4 +2586,660 @@ mod tests {
         assert_eq!(result.oldest_timestamp, 0);
         assert_eq!(result.newest_timestamp, now);
     }
+
+    // Configurable mock storage provider for testing async functions
+    struct ConfigurableMockStorageProvider {
+        base_path: String,
+        options: OnceLock<HashMap<String, String>>,
+        files: Vec<FileMetadata>,
+        file_contents: HashMap<String, Vec<u8>>,
+    }
+
+    impl ConfigurableMockStorageProvider {
+        fn new(base_path: &str) -> Self {
+            Self {
+                base_path: base_path.to_string(),
+                options: OnceLock::new(),
+                files: vec![],
+                file_contents: HashMap::new(),
+            }
+        }
+
+        fn with_file_content(mut self, path: &str, content: Vec<u8>) -> Self {
+            self.file_contents.insert(path.to_string(), content);
+            self
+        }
+    }
+
+    #[async_trait]
+    impl StorageProvider for ConfigurableMockStorageProvider {
+        fn base_path(&self) -> &str {
+            &self.base_path
+        }
+
+        async fn validate_connection(&self, _path: &str) -> StorageResult<()> {
+            Ok(())
+        }
+
+        async fn list_files(
+            &self,
+            _path: &str,
+            _recursive: bool,
+        ) -> StorageResult<Vec<FileMetadata>> {
+            Ok(self.files.clone())
+        }
+
+        async fn discover_partitions(
+            &self,
+            _path: &str,
+            _exclude_prefixes: Vec<&str>,
+        ) -> StorageResult<Vec<String>> {
+            Ok(vec![])
+        }
+
+        async fn list_files_parallel(
+            &self,
+            _path: &str,
+            _partitions: Vec<String>,
+            _parallelism: usize,
+        ) -> StorageResult<Vec<FileMetadata>> {
+            Ok(self.files.clone())
+        }
+
+        async fn read_file(&self, path: &str) -> StorageResult<Vec<u8>> {
+            if let Some(content) = self.file_contents.get(path) {
+                Ok(content.clone())
+            } else {
+                Ok(vec![])
+            }
+        }
+
+        async fn exists(&self, _path: &str) -> StorageResult<bool> {
+            Ok(true)
+        }
+
+        async fn get_metadata(&self, path: &str) -> StorageResult<FileMetadata> {
+            Ok(FileMetadata {
+                path: path.to_string(),
+                size: 0,
+                last_modified: None,
+            })
+        }
+
+        fn options(&self) -> &HashMap<String, String> {
+            self.options.get_or_init(HashMap::new)
+        }
+
+        fn clean_options(&self) -> HashMap<String, String> {
+            HashMap::new()
+        }
+
+        fn uri_from_path(&self, path: &str) -> String {
+            path.to_string()
+        }
+    }
+
+    // ========== Tests for calculate_constraint_violation_risk ==========
+
+    #[test]
+    fn test_calculate_constraint_violation_risk_no_constraints() {
+        let analyzer = create_test_analyzer();
+        let risk = analyzer.calculate_constraint_violation_risk(0, 0);
+        assert_eq!(risk, 0.5); // Medium risk when no constraints
+    }
+
+    #[test]
+    fn test_calculate_constraint_violation_risk_few_constraints_no_check() {
+        let analyzer = create_test_analyzer();
+        let risk = analyzer.calculate_constraint_violation_risk(3, 0);
+        // < 5 constraints = 0.3, no check constraints = 0.3
+        assert_eq!(risk, 0.6);
+    }
+
+    #[test]
+    fn test_calculate_constraint_violation_risk_few_constraints_with_check() {
+        let analyzer = create_test_analyzer();
+        let risk = analyzer.calculate_constraint_violation_risk(3, 1);
+        // < 5 constraints = 0.3, < 3 check constraints = 0.2
+        assert_eq!(risk, 0.5);
+    }
+
+    #[test]
+    fn test_calculate_constraint_violation_risk_medium_constraints() {
+        let analyzer = create_test_analyzer();
+        let risk = analyzer.calculate_constraint_violation_risk(7, 3);
+        // 5-10 constraints = 0.2, >= 3 check constraints = 0.0
+        assert_eq!(risk, 0.2);
+    }
+
+    #[test]
+    fn test_calculate_constraint_violation_risk_many_constraints() {
+        let analyzer = create_test_analyzer();
+        let risk = analyzer.calculate_constraint_violation_risk(15, 5);
+        // 10-20 constraints = 0.1, >= 3 check constraints = 0.0
+        assert_eq!(risk, 0.1);
+    }
+
+    #[test]
+    fn test_calculate_constraint_violation_risk_very_many_constraints() {
+        let analyzer = create_test_analyzer();
+        let risk = analyzer.calculate_constraint_violation_risk(25, 10);
+        // >= 20 constraints = 0.0, >= 3 check constraints = 0.0
+        assert_eq!(risk, 0.0);
+    }
+
+    // ========== Tests for calculate_data_quality_score ==========
+
+    #[test]
+    fn test_calculate_data_quality_score_no_constraints_medium_risk() {
+        let analyzer = create_test_analyzer();
+        let score = analyzer.calculate_data_quality_score(0, 0.5);
+        // 1.0 - (0.5 * 0.5) = 0.75
+        assert_eq!(score, 0.75);
+    }
+
+    #[test]
+    fn test_calculate_data_quality_score_high_risk() {
+        let analyzer = create_test_analyzer();
+        let score = analyzer.calculate_data_quality_score(0, 1.0);
+        // 1.0 - (1.0 * 0.5) = 0.5
+        assert_eq!(score, 0.5);
+    }
+
+    #[test]
+    fn test_calculate_data_quality_score_low_risk_few_constraints() {
+        let analyzer = create_test_analyzer();
+        let score = analyzer.calculate_data_quality_score(5, 0.1);
+        // 1.0 - (0.1 * 0.5) = 0.95
+        assert_eq!(score, 0.95);
+    }
+
+    #[test]
+    fn test_calculate_data_quality_score_low_risk_medium_constraints() {
+        let analyzer = create_test_analyzer();
+        let score = analyzer.calculate_data_quality_score(15, 0.1);
+        // 1.0 - (0.1 * 0.5) + 0.1 = 1.0 (clamped)
+        assert_eq!(score, 1.0);
+    }
+
+    #[test]
+    fn test_calculate_data_quality_score_low_risk_many_constraints() {
+        let analyzer = create_test_analyzer();
+        let score = analyzer.calculate_data_quality_score(25, 0.0);
+        // 1.0 - 0 + 0.2 = 1.0 (clamped)
+        assert_eq!(score, 1.0);
+    }
+
+    // ========== Tests for calculate_constraint_coverage_score ==========
+
+    #[test]
+    fn test_calculate_constraint_coverage_score_no_constraints() {
+        let analyzer = create_test_analyzer();
+        let score = analyzer.calculate_constraint_coverage_score(0, 0);
+        assert_eq!(score, 0.0);
+    }
+
+    #[test]
+    fn test_calculate_constraint_coverage_score_no_check_constraints() {
+        let analyzer = create_test_analyzer();
+        let score = analyzer.calculate_constraint_coverage_score(10, 0);
+        assert_eq!(score, 0.0);
+    }
+
+    #[test]
+    fn test_calculate_constraint_coverage_score_half_check() {
+        let analyzer = create_test_analyzer();
+        let score = analyzer.calculate_constraint_coverage_score(10, 5);
+        assert_eq!(score, 0.5);
+    }
+
+    #[test]
+    fn test_calculate_constraint_coverage_score_all_check() {
+        let analyzer = create_test_analyzer();
+        let score = analyzer.calculate_constraint_coverage_score(10, 10);
+        assert_eq!(score, 1.0);
+    }
+
+    #[test]
+    fn test_calculate_constraint_coverage_score_partial() {
+        let analyzer = create_test_analyzer();
+        let score = analyzer.calculate_constraint_coverage_score(8, 2);
+        assert_eq!(score, 0.25);
+    }
+
+    // ========== Tests for categorize_files (TableAnalyzer trait) ==========
+
+    #[test]
+    fn test_categorize_files_trait_implementation() {
+        let analyzer = create_test_analyzer();
+        let files = vec![
+            FileMetadata {
+                path: "_delta_log/00000000000000000000.json".to_string(),
+                size: 1024,
+                last_modified: None,
+            },
+            FileMetadata {
+                path: "part-00000.parquet".to_string(),
+                size: 50 * 1024 * 1024,
+                last_modified: None,
+            },
+        ];
+
+        // Use the trait method
+        let (data_files, metadata_files) = analyzer.categorize_files(files);
+
+        assert_eq!(data_files.len(), 1);
+        assert_eq!(metadata_files.len(), 1);
+        assert!(data_files[0].path.contains("part-00000.parquet"));
+        assert!(metadata_files[0].path.contains("_delta_log"));
+    }
+
+    #[test]
+    fn test_categorize_files_checkpoint_parquet() {
+        let analyzer = create_test_analyzer();
+        let files = vec![
+            FileMetadata {
+                path: "_delta_log/00000000000000000010.checkpoint.parquet".to_string(),
+                size: 4096,
+                last_modified: None,
+            },
+            FileMetadata {
+                path: "_delta_log/00000000000000000011.json".to_string(),
+                size: 1024,
+                last_modified: None,
+            },
+            FileMetadata {
+                path: "data/part-00000.parquet".to_string(),
+                size: 100 * 1024 * 1024,
+                last_modified: None,
+            },
+        ];
+
+        let (data_files, metadata_files) = analyzer.categorize_files(files);
+
+        assert_eq!(data_files.len(), 1);
+        assert_eq!(metadata_files.len(), 2); // Both JSON and checkpoint
+    }
+
+    #[test]
+    fn test_categorize_files_non_parquet_ignored() {
+        let analyzer = create_test_analyzer();
+        let files = vec![
+            FileMetadata {
+                path: "data/file.csv".to_string(),
+                size: 1024,
+                last_modified: None,
+            },
+            FileMetadata {
+                path: "data/file.json".to_string(),
+                size: 2048,
+                last_modified: None,
+            },
+            FileMetadata {
+                path: "_delta_log/00000000000000000000.json".to_string(),
+                size: 512,
+                last_modified: None,
+            },
+        ];
+
+        let (data_files, metadata_files) = analyzer.categorize_files(files);
+
+        assert_eq!(data_files.len(), 0); // CSV and JSON not in _delta_log are ignored
+        assert_eq!(metadata_files.len(), 1);
+    }
+
+    // ========== Tests for extract_schema_and_constraints ==========
+
+    #[test]
+    fn test_extract_schema_and_constraints_no_metadata() {
+        let analyzer = create_test_analyzer();
+        let entry = json!({
+            "add": {
+                "path": "file.parquet"
+            }
+        });
+        let mut result = MetadataProcessingResult::default();
+
+        analyzer.extract_schema_and_constraints(&entry, &mut result, 1);
+
+        assert_eq!(result.total_constraints, 0);
+        assert!(result.schema_changes.is_empty());
+    }
+
+    #[test]
+    fn test_extract_schema_and_constraints_with_schema() {
+        let analyzer = create_test_analyzer();
+        let schema = json!({
+            "type": "struct",
+            "fields": [
+                {"name": "id", "type": "integer", "nullable": false},
+                {"name": "name", "type": "string", "nullable": true}
+            ]
+        });
+        let entry = json!({
+            "metaData": {
+                "schemaString": schema.to_string(),
+                "id": "test-table"
+            },
+            "timestamp": 1609459200000i64
+        });
+        let mut result = MetadataProcessingResult::default();
+
+        analyzer.extract_schema_and_constraints(&entry, &mut result, 1);
+
+        // Should have extracted schema and added a schema change
+        assert_eq!(result.schema_changes.len(), 1);
+        assert_eq!(result.schema_changes[0].version, 1);
+        assert_eq!(result.schema_changes[0].timestamp, 1609459200000);
+    }
+
+    #[test]
+    fn test_extract_schema_and_constraints_with_not_null() {
+        let analyzer = create_test_analyzer();
+        let schema = json!({
+            "type": "struct",
+            "fields": [
+                {"name": "id", "type": "integer", "nullable": false},
+                {"name": "email", "type": "string", "nullable": false},
+                {"name": "name", "type": "string", "nullable": true}
+            ]
+        });
+        let entry = json!({
+            "metaData": {
+                "schemaString": schema.to_string()
+            }
+        });
+        let mut result = MetadataProcessingResult::default();
+
+        analyzer.extract_schema_and_constraints(&entry, &mut result, 1);
+
+        // Two NOT NULL constraints (id and email)
+        assert_eq!(result.not_null_constraints, 2);
+        // total_constraints counts all fields (3 fields)
+        assert_eq!(result.total_constraints, 3);
+    }
+
+    // ========== Tests for find_referenced_files ==========
+
+    #[tokio::test]
+    async fn test_find_referenced_files_empty() {
+        let mock_storage = Arc::new(ConfigurableMockStorageProvider::new("/test"));
+        let analyzer = DeltaAnalyzer::new(mock_storage, 1);
+
+        let result = analyzer.find_referenced_files(&[]).await.unwrap();
+        assert!(result.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_find_referenced_files_with_add_actions() {
+        let json_content = r#"{"add":{"path":"part-00000.parquet","size":1024}}
+{"add":{"path":"part-00001.parquet","size":2048}}"#;
+
+        let mock_storage = Arc::new(
+            ConfigurableMockStorageProvider::new("/test").with_file_content(
+                "_delta_log/00000000000000000000.json",
+                json_content.as_bytes().to_vec(),
+            ),
+        );
+        let analyzer = DeltaAnalyzer::new(mock_storage, 1);
+
+        let metadata_files = vec![FileMetadata {
+            path: "_delta_log/00000000000000000000.json".to_string(),
+            size: 100,
+            last_modified: None,
+        }];
+
+        let result = analyzer
+            .find_referenced_files(&metadata_files)
+            .await
+            .unwrap();
+        assert_eq!(result.len(), 2);
+        assert!(result.contains(&"part-00000.parquet".to_string()));
+        assert!(result.contains(&"part-00001.parquet".to_string()));
+    }
+
+    #[tokio::test]
+    async fn test_find_referenced_files_ignores_checkpoints() {
+        let mock_storage = Arc::new(ConfigurableMockStorageProvider::new("/test"));
+        let analyzer = DeltaAnalyzer::new(mock_storage, 1);
+
+        // Checkpoint files should be filtered out (only .json files are processed)
+        let metadata_files = vec![FileMetadata {
+            path: "_delta_log/00000000000000000010.checkpoint.parquet".to_string(),
+            size: 4096,
+            last_modified: None,
+        }];
+
+        let result = analyzer
+            .find_referenced_files(&metadata_files)
+            .await
+            .unwrap();
+        assert!(result.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_find_referenced_files_multiple_json_files() {
+        let json1 = r#"{"add":{"path":"file1.parquet","size":1024}}"#;
+        let json2 = r#"{"add":{"path":"file2.parquet","size":2048}}"#;
+
+        let mock_storage = Arc::new(
+            ConfigurableMockStorageProvider::new("/test")
+                .with_file_content(
+                    "_delta_log/00000000000000000000.json",
+                    json1.as_bytes().to_vec(),
+                )
+                .with_file_content(
+                    "_delta_log/00000000000000000001.json",
+                    json2.as_bytes().to_vec(),
+                ),
+        );
+        let analyzer = DeltaAnalyzer::new(mock_storage, 2);
+
+        let metadata_files = vec![
+            FileMetadata {
+                path: "_delta_log/00000000000000000000.json".to_string(),
+                size: 50,
+                last_modified: None,
+            },
+            FileMetadata {
+                path: "_delta_log/00000000000000000001.json".to_string(),
+                size: 50,
+                last_modified: None,
+            },
+        ];
+
+        let result = analyzer
+            .find_referenced_files(&metadata_files)
+            .await
+            .unwrap();
+        assert_eq!(result.len(), 2);
+    }
+
+    // ========== Tests for process_single_metadata_file ==========
+
+    #[tokio::test]
+    async fn test_process_single_metadata_file_json() {
+        let json_content = r#"{"add":{"path":"file.parquet","size":1024}}"#;
+
+        let mock_storage = Arc::new(
+            ConfigurableMockStorageProvider::new("/test").with_file_content(
+                "_delta_log/00000000000000000000.json",
+                json_content.as_bytes().to_vec(),
+            ),
+        );
+        let analyzer = DeltaAnalyzer::new(mock_storage, 1);
+
+        let result = analyzer
+            .process_single_metadata_file("_delta_log/00000000000000000000.json", 0)
+            .await
+            .unwrap();
+
+        // Basic result should be returned
+        assert!(result.schema_changes.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_process_single_metadata_file_with_clustering() {
+        let json_content = r#"{"clusterBy":["col1","col2"]}"#;
+
+        let mock_storage = Arc::new(
+            ConfigurableMockStorageProvider::new("/test").with_file_content(
+                "_delta_log/00000000000000000000.json",
+                json_content.as_bytes().to_vec(),
+            ),
+        );
+        let analyzer = DeltaAnalyzer::new(mock_storage, 1);
+
+        let result = analyzer
+            .process_single_metadata_file("_delta_log/00000000000000000000.json", 0)
+            .await
+            .unwrap();
+
+        assert!(result.z_order_opportunity);
+        assert_eq!(result.clustering_columns, vec!["col1", "col2"]);
+    }
+
+    #[tokio::test]
+    async fn test_process_single_metadata_file_with_deletion_vector() {
+        let json_content = r#"{"add":{"path":"file.parquet","deletionVector":{"sizeInBytes":512,"cardinality":50},"timestamp":1609459200000}}"#;
+
+        let mock_storage = Arc::new(
+            ConfigurableMockStorageProvider::new("/test").with_file_content(
+                "_delta_log/00000000000000000000.json",
+                json_content.as_bytes().to_vec(),
+            ),
+        );
+        let analyzer = DeltaAnalyzer::new(mock_storage, 1);
+
+        let result = analyzer
+            .process_single_metadata_file("_delta_log/00000000000000000000.json", 0)
+            .await
+            .unwrap();
+
+        assert_eq!(result.deletion_vector_count, 1);
+        assert_eq!(result.deletion_vector_total_size, 512);
+        assert_eq!(result.deleted_rows, 50);
+    }
+
+    #[tokio::test]
+    async fn test_process_single_metadata_file_with_schema() {
+        let schema = json!({
+            "type": "struct",
+            "fields": [
+                {"name": "id", "type": "integer", "nullable": false}
+            ]
+        });
+        let json_content = json!({
+            "metaData": {
+                "schemaString": schema.to_string()
+            },
+            "timestamp": 1609459200000i64
+        })
+        .to_string();
+
+        let mock_storage = Arc::new(
+            ConfigurableMockStorageProvider::new("/test").with_file_content(
+                "_delta_log/00000000000000000000.json",
+                json_content.as_bytes().to_vec(),
+            ),
+        );
+        let analyzer = DeltaAnalyzer::new(mock_storage, 1);
+
+        let result = analyzer
+            .process_single_metadata_file("_delta_log/00000000000000000000.json", 0)
+            .await
+            .unwrap();
+
+        assert_eq!(result.schema_changes.len(), 1);
+        assert_eq!(result.not_null_constraints, 1);
+    }
+
+    // ========== Tests for update_metrics_from_delta_metadata ==========
+
+    #[tokio::test]
+    async fn test_update_metrics_from_delta_metadata_empty() {
+        let mock_storage = Arc::new(ConfigurableMockStorageProvider::new("/test"));
+        let analyzer = DeltaAnalyzer::new(mock_storage, 1);
+
+        let mut metrics = HealthMetrics::default();
+        let result = analyzer
+            .update_metrics_from_delta_metadata(&[], 0, 0, &mut metrics)
+            .await;
+
+        assert!(result.is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_update_metrics_from_delta_metadata_with_json() {
+        let json_content = r#"{"add":{"path":"file.parquet","size":1024,"deletionVector":{"sizeInBytes":256,"cardinality":10},"timestamp":1609459200000}}"#;
+
+        let mock_storage = Arc::new(
+            ConfigurableMockStorageProvider::new("/test").with_file_content(
+                "_delta_log/00000000000000000000.json",
+                json_content.as_bytes().to_vec(),
+            ),
+        );
+        let analyzer = DeltaAnalyzer::new(mock_storage, 1);
+
+        let metadata_files = vec![FileMetadata {
+            path: "_delta_log/00000000000000000000.json".to_string(),
+            size: 100,
+            last_modified: None,
+        }];
+
+        let mut metrics = HealthMetrics::default();
+        let result = analyzer
+            .update_metrics_from_delta_metadata(&metadata_files, 1024 * 1024, 10, &mut metrics)
+            .await;
+
+        assert!(result.is_ok());
+        // Deletion vector metrics should be populated
+        assert!(metrics.deletion_vector_metrics.is_some());
+        let dv = metrics.deletion_vector_metrics.as_ref().unwrap();
+        assert_eq!(dv.deletion_vector_count, 1);
+        assert_eq!(dv.total_deletion_vector_size_bytes, 256);
+    }
+
+    #[tokio::test]
+    async fn test_update_metrics_from_delta_metadata_with_schema() {
+        let schema = json!({
+            "type": "struct",
+            "fields": [
+                {"name": "id", "type": "integer", "nullable": false},
+                {"name": "name", "type": "string", "nullable": true}
+            ]
+        });
+        let json_content = json!({
+            "metaData": {
+                "schemaString": schema.to_string()
+            },
+            "timestamp": 1609459200000i64
+        })
+        .to_string();
+
+        let mock_storage = Arc::new(
+            ConfigurableMockStorageProvider::new("/test").with_file_content(
+                "_delta_log/00000000000000000000.json",
+                json_content.as_bytes().to_vec(),
+            ),
+        );
+        let analyzer = DeltaAnalyzer::new(mock_storage, 1);
+
+        let metadata_files = vec![FileMetadata {
+            path: "_delta_log/00000000000000000000.json".to_string(),
+            size: 200,
+            last_modified: None,
+        }];
+
+        let mut metrics = HealthMetrics::default();
+        let result = analyzer
+            .update_metrics_from_delta_metadata(&metadata_files, 100 * 1024 * 1024, 5, &mut metrics)
+            .await;
+
+        assert!(result.is_ok());
+        // Schema evolution metrics should be populated
+        assert!(metrics.schema_evolution.is_some());
+        // Constraints metrics should be populated
+        assert!(metrics.table_constraints.is_some());
+    }
 }
