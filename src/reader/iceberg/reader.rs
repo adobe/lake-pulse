@@ -70,6 +70,12 @@ impl IcebergReader {
     ) -> Result<Self, Box<dyn Error + Send + Sync>> {
         info!("Opening Iceberg table from location: {}", table_location);
 
+        // Normalize the path for iceberg-rust's FileIO
+        // iceberg-rust expects file:/ followed by the path (e.g., file:/home/user/path)
+        // but other libraries use file:// (e.g., file:///home/user/path)
+        // See: https://github.com/apache/iceberg-rust/blob/main/crates/iceberg/src/io/storage.rs
+        let normalized_location = Self::normalize_file_path(table_location);
+
         // Build FileIO with storage options
         let mut file_io_builder = FileIOBuilder::new_fs_io();
 
@@ -83,7 +89,7 @@ impl IcebergReader {
         // Find the latest metadata file
         // Iceberg tables store metadata in <table_location>/metadata/v<N>.metadata.json
         // or use version-hint.text to point to the latest version
-        let metadata_location = Self::find_latest_metadata(&file_io, table_location).await?;
+        let metadata_location = Self::find_latest_metadata(&file_io, &normalized_location).await?;
         info!("Found latest metadata file: {}", metadata_location);
 
         // Create a table identifier (can be arbitrary for static tables)
@@ -103,6 +109,22 @@ impl IcebergReader {
         );
 
         Ok(Self { table })
+    }
+
+    /// Normalize file paths for iceberg-rust's FileIO.
+    ///
+    /// iceberg-rust expects file:/ followed by the absolute path (e.g., file:/home/user/path)
+    /// but the standard file URI format uses file:// (e.g., file:///home/user/path).
+    /// This method converts from the standard format to iceberg-rust's expected format.
+    fn normalize_file_path(path: &str) -> String {
+        if path.starts_with("file://") {
+            // Convert file:///path to file:/path
+            // file:// is followed by the path, so we need to strip one slash
+            let without_scheme = path.strip_prefix("file://").unwrap();
+            format!("file:/{}", without_scheme)
+        } else {
+            path.to_string()
+        }
     }
 
     /// Find the latest metadata file for an Iceberg table.
@@ -145,11 +167,7 @@ impl IcebergReader {
             }
         }
 
-        Err(format!(
-            "Could not find Iceberg metadata file in {}",
-            metadata_dir
-        )
-        .into())
+        Err(format!("Could not find Iceberg metadata file in {}", metadata_dir).into())
     }
 
     /// Extract comprehensive metrics from the Iceberg table.
@@ -710,6 +728,46 @@ mod tests {
             result.is_err(),
             "Should fail to find metadata in non-existent path"
         );
+    }
+
+    #[test]
+    fn test_normalize_file_path_with_triple_slash() {
+        // Standard file URI format (file:///) should be converted to file:/
+        let input = "file:///home/user/path/to/table";
+        let result = IcebergReader::normalize_file_path(input);
+        assert_eq!(result, "file://home/user/path/to/table");
+    }
+
+    #[test]
+    fn test_normalize_file_path_with_double_slash() {
+        // Already in file:// format, should add file:/ prefix
+        let input = "file://home/user/path/to/table";
+        let result = IcebergReader::normalize_file_path(input);
+        assert_eq!(result, "file:/home/user/path/to/table");
+    }
+
+    #[test]
+    fn test_normalize_file_path_with_single_slash() {
+        // file:/ format should remain unchanged
+        let input = "file:/home/user/path/to/table";
+        let result = IcebergReader::normalize_file_path(input);
+        assert_eq!(result, "file:/home/user/path/to/table");
+    }
+
+    #[test]
+    fn test_normalize_file_path_non_file_scheme() {
+        // Non-file schemes should remain unchanged
+        let input = "s3://bucket/path/to/table";
+        let result = IcebergReader::normalize_file_path(input);
+        assert_eq!(result, "s3://bucket/path/to/table");
+    }
+
+    #[test]
+    fn test_normalize_file_path_absolute_path() {
+        // Absolute path without scheme should remain unchanged
+        let input = "/home/user/path/to/table";
+        let result = IcebergReader::normalize_file_path(input);
+        assert_eq!(result, "/home/user/path/to/table");
     }
 
     #[tokio::test]
