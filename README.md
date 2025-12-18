@@ -14,8 +14,8 @@
 [coverage-link]: https://codecov.io/gh/adobe/lake-pulse
 [license-badge]: https://img.shields.io/badge/license-MIT_or_Apache--2.0-blue
 [license-link]: ./LICENSE-APACHE
-[docs-badge]: https://img.shields.io/badge/docs-passing-green
-[docs-link]: https://docs.rs/lake_pulse/latest/lake_pulse/
+[docs-badge]: https://docs.rs/lake_pulse/badge.svg
+[docs-link]: https://docs.rs/lake_pulse
 
 ![Lake Pulse Logo](./lake-pulse-logo.svg)
 
