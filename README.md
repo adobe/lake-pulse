@@ -1,21 +1,24 @@
 # Lake Pulse <img src=./rustacean-flat-happy.svg style="width: 40px" />
 
-[![Coverage Status][coverage-badge]][coverage-link]
+[![CI][ci-badge]][ci-link]
+[![codecov][coverage-badge]][coverage-link]
+[![Docs][docs-badge]][docs-link]
 [![License: MIT or Apache-2.0][license-badge]][license-link]
 [![Rust Version][version-badge]][version-link]
-[![Docs][docs-badge]][docs-link]
-[![Release][release-badge]][release-link]
+[![Latest Version][crates-badge]][crates-link]
 
-[coverage-badge]: https://img.shields.io/badge/coverage-73%25-green
-[coverage-link]: https://github.com/aionescu_adobe/lake-pulse/actions/workflows/rust.yml
+[ci-badge]: https://github.com/adobe/lake-pulse/actions/workflows/ci.yml/badge.svg
+[ci-link]: https://github.com/adobe/lake-pulse/actions/workflows/ci.yml
+[crates-badge]: https://img.shields.io/crates/v/lake_pulse.svg
+[crates-link]: https://crates.io/crates/lake_pulse
+[coverage-badge]: https://codecov.io/gh/adobe/lake-pulse/graph/badge.svg?token=3mH5uUJ6se
+[coverage-link]: https://codecov.io/gh/adobe/lake-pulse
 [license-badge]: https://img.shields.io/badge/license-MIT_or_Apache--2.0-blue
 [license-link]: ./LICENSE-APACHE
 [version-badge]: https://img.shields.io/badge/rust-1.88+-orange
 [version-link]: https://releases.rs/docs/1.88.0/
 [docs-badge]: https://img.shields.io/badge/docs-passing-green
 [docs-link]: https://docs.rs/lake_pulse/latest/lake_pulse/
-[release-badge]: https://img.shields.io/badge/release-v0.1.0-yellow
-[release-link]: https://github.com/aionescu_adobe/lake-pulse/releases/tag/v0.1.0
 
 ![Lake Pulse Logo](./lake-pulse-logo.svg)
 
