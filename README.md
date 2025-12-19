@@ -79,6 +79,39 @@ async fn main() {
 - **Apache Hudi** - Basic support for Hudi table structure analysis and metrics
 - **Lance** - Modern columnar format with vector search capabilities
 
+## Feature Flags
+
+Lake Pulse uses Cargo feature flags to control which table formats are compiled. This allows you to minimize dependencies and compile times by only including the formats you need.
+
+| Feature | Description | Dependencies |
+|---------|-------------|--------------|
+| `default` | Includes `delta` + `iceberg` | - |
+| `delta` | Delta Lake support | `deltalake`, `deltalake-azure`, `deltalake-aws` |
+| `iceberg` | Apache Iceberg support | `iceberg` |
+| `hudi` | Apache Hudi support | (no external deps) |
+| `lance` | Lance support | `lance` |
+| `experimental` | Includes `hudi` + `lance` | - |
+
+### Usage Examples
+
+```toml
+# Default features (Delta + Iceberg)
+[dependencies]
+lake_pulse = "0.1"
+
+# Only Delta Lake
+[dependencies]
+lake_pulse = { version = "0.1", default-features = false, features = ["delta"] }
+
+# All formats
+[dependencies]
+lake_pulse = { version = "0.1", features = ["experimental"] }
+
+# Only experimental formats (Hudi + Lance)
+[dependencies]
+lake_pulse = { version = "0.1", default-features = false, features = ["experimental"] }
+```
+
 ## Storage Configuration
 
 Lake Pulse uses the [`object_store`](https://docs.rs/object_store/) crate for cloud storage access. Configuration options are passed through to the underlying storage provider.
@@ -128,7 +161,15 @@ See the [`examples/`](examples/) directory for more detailed usage examples:
 
 Run examples with:
 ```bash
-cargo run --example s3_store
+# Run with default features (Delta + Iceberg)
+cargo run --example local_store
+
+# Run format-specific examples (requires the corresponding feature)
+cargo run --all-features --example local_store_hudi
+cargo run --all-features --example local_store_lance
+
+# Or enable specific features
+cargo run --features experimental --example local_store_hudi
 ```
 
 ## Documentation

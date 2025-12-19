@@ -25,15 +25,19 @@
 //!
 //! ## Format-Specific Analyzers
 //!
-//! - [`delta`] - Delta Lake table analysis
-//! - [`iceberg`] - Apache Iceberg table analysis
-//! - [`hudi`] - Apache Hudi table analysis
-//! - [`lance`] - Lance table analysis
+//! - [`delta`] - Delta Lake table analysis (requires `delta` feature)
+//! - [`iceberg`] - Apache Iceberg table analysis (requires `iceberg` feature)
+//! - [`hudi`] - Apache Hudi table analysis (requires `hudi` feature)
+//! - [`lance`] - Lance table analysis (requires `lance` feature)
 
 pub mod analyzer;
+#[cfg(feature = "delta")]
 pub mod delta;
+#[cfg(feature = "hudi")]
 pub mod hudi;
+#[cfg(feature = "iceberg")]
 pub mod iceberg;
+#[cfg(feature = "lance")]
 pub mod lance;
 pub mod metrics;
 pub mod table_analyzer;

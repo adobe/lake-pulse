@@ -11,26 +11,85 @@
 // specific language governing permissions and limitations under
 // each license.
 
+#[cfg(feature = "delta")]
 use crate::analyze::delta::DeltaAnalyzer;
+#[cfg(feature = "hudi")]
 use crate::analyze::hudi::HudiAnalyzer;
+#[cfg(feature = "iceberg")]
 use crate::analyze::iceberg::IcebergAnalyzer;
+#[cfg(feature = "lance")]
 use crate::analyze::lance::analyze::LanceAnalyzer;
+#[cfg(not(any(
+    feature = "delta",
+    feature = "iceberg",
+    feature = "hudi",
+    feature = "lance"
+)))]
+use crate::analyze::metrics::HealthReport;
+#[cfg(any(
+    feature = "delta",
+    feature = "iceberg",
+    feature = "hudi",
+    feature = "lance"
+))]
 use crate::analyze::metrics::{
     FileCompactionMetrics, FileInfo, HealthMetrics, HealthReport, PartitionInfo, TimedLikeMetrics,
 };
+#[cfg(any(
+    feature = "delta",
+    feature = "iceberg",
+    feature = "hudi",
+    feature = "lance"
+))]
 use crate::analyze::table_analyzer::TableAnalyzer;
+#[cfg(feature = "delta")]
 use crate::reader::delta::reader::DeltaReader;
+#[cfg(feature = "hudi")]
 use crate::reader::hudi::reader::HudiReader;
+#[cfg(feature = "iceberg")]
 use crate::reader::iceberg::reader::IcebergReader;
-use crate::storage::{FileMetadata, StorageConfig, StorageProvider, StorageProviderFactory};
+#[cfg(any(
+    feature = "delta",
+    feature = "iceberg",
+    feature = "hudi",
+    feature = "lance"
+))]
+use crate::storage::FileMetadata;
+use crate::storage::{StorageConfig, StorageProvider, StorageProviderFactory};
+#[cfg(any(
+    feature = "delta",
+    feature = "iceberg",
+    feature = "hudi",
+    feature = "lance"
+))]
 use crate::util::helpers::{
     detect_table_type, measure_dur, measure_dur_async, measure_dur_with_error,
 };
+#[cfg(any(
+    feature = "delta",
+    feature = "iceberg",
+    feature = "hudi",
+    feature = "lance"
+))]
 use std::collections::{HashMap, HashSet, LinkedList};
 use std::error::Error;
 use std::sync::Arc;
+#[cfg(any(
+    feature = "delta",
+    feature = "iceberg",
+    feature = "hudi",
+    feature = "lance"
+))]
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
-use tracing::{info, warn};
+#[cfg(any(
+    feature = "delta",
+    feature = "iceberg",
+    feature = "hudi",
+    feature = "lance"
+))]
+use tracing::info;
+#[cfg(any(feature = "delta", feature = "iceberg", feature = "hudi"))]
+use tracing::warn;
 
 /// Builder for constructing an `Analyzer` instance.
 ///
@@ -221,7 +280,25 @@ impl AnalyzerBuilder {
 ///
 /// For complete examples, see the [`examples/`](https://github.com/aionescu_adobe/lake-pulse/tree/main/examples) directory.
 pub struct Analyzer {
+    #[cfg_attr(
+        not(any(
+            feature = "delta",
+            feature = "iceberg",
+            feature = "hudi",
+            feature = "lance"
+        )),
+        allow(dead_code)
+    )]
     storage_provider: Arc<dyn StorageProvider>,
+    #[cfg_attr(
+        not(any(
+            feature = "delta",
+            feature = "iceberg",
+            feature = "hudi",
+            feature = "lance"
+        )),
+        allow(dead_code)
+    )]
     parallelism: usize,
 }
 
@@ -290,161 +367,207 @@ impl Analyzer {
         &self,
         location: &str,
     ) -> Result<HealthReport, Box<dyn Error + Send + Sync>> {
-        let mut internal_metrics: LinkedList<(&str, SystemTime, Duration)> = LinkedList::new();
-        let mut metrics = HealthMetrics::new();
+        // Check at runtime if any table format features are enabled
+        #[cfg(not(any(
+            feature = "delta",
+            feature = "iceberg",
+            feature = "hudi",
+            feature = "lance"
+        )))]
+        {
+            let _ = location; // Suppress unused variable warning
+            return Err("No table format features are enabled. Enable at least one of: 'delta', 'iceberg', 'hudi', 'lance'.".into());
+        }
 
-        info!(
-            "Analyzing, base_path={}/{}",
-            self.storage_provider.base_path(),
-            location
-        );
+        #[cfg(any(
+            feature = "delta",
+            feature = "iceberg",
+            feature = "hudi",
+            feature = "lance"
+        ))]
+        {
+            let mut internal_metrics: LinkedList<(&str, SystemTime, Duration)> = LinkedList::new();
+            let mut metrics = HealthMetrics::new();
 
-        measure_dur_async(
-            "validate_connection_dur",
-            &mut internal_metrics,
-            || async { self.storage_provider.validate_connection(location).await },
-            Some(|_| "Successfully validated connection".to_string()),
-        )
-        .await?;
+            info!(
+                "Analyzing, base_path={}/{}",
+                self.storage_provider.base_path(),
+                location
+            );
 
-        let partitions = measure_dur_async(
-            "discover_partitions",
-            &mut internal_metrics,
-            || async {
-                self.storage_provider
-                    .discover_partitions(location, vec![])
-                    .await
-            },
-            Some(|c: &Vec<String>| format!("Discovered partitions count={}", c.len())),
-        )
-        .await?;
+            measure_dur_async(
+                "validate_connection_dur",
+                &mut internal_metrics,
+                || async { self.storage_provider.validate_connection(location).await },
+                Some(|_| "Successfully validated connection".to_string()),
+            )
+            .await?;
 
-        let list_files_start = SystemTime::now();
-        let all_objects = measure_dur_async(
-            "list_files_parallel",
-            &mut internal_metrics,
-            || async {
-                self.storage_provider
-                    .list_files_parallel(location, partitions.clone(), self.parallelism)
-                    .await
-            },
-            Some(|c: &Vec<FileMetadata>| format!("Listed files count={}", c.len())),
-        )
-        .await?;
+            let partitions = measure_dur_async(
+                "discover_partitions",
+                &mut internal_metrics,
+                || async {
+                    self.storage_provider
+                        .discover_partitions(location, vec![])
+                        .await
+                },
+                Some(|c: &Vec<String>| format!("Discovered partitions count={}", c.len())),
+            )
+            .await?;
 
-        // Detect table type and instantiate appropriate analyzer
-        let table_type: String = measure_dur(
-            "detect_table_type",
-            &mut internal_metrics,
-            || detect_table_type(&all_objects),
-            Some(|t: String| format!("Detected table type={}", t)),
-        )
-        .await;
+            let list_files_start = SystemTime::now();
+            let all_objects = measure_dur_async(
+                "list_files_parallel",
+                &mut internal_metrics,
+                || async {
+                    self.storage_provider
+                        .list_files_parallel(location, partitions.clone(), self.parallelism)
+                        .await
+                },
+                Some(|c: &Vec<FileMetadata>| format!("Listed files count={}", c.len())),
+            )
+            .await?;
 
-        // Instantiate the appropriate table analyzer based on detected type
-        let table_analyzer: Arc<dyn TableAnalyzer> = match table_type.as_str() {
-            "delta" => Arc::new(DeltaAnalyzer::new(
-                Arc::clone(&self.storage_provider),
-                self.parallelism,
-            )),
-            "hudi" => Arc::new(HudiAnalyzer::new(
-                Arc::clone(&self.storage_provider),
-                self.parallelism,
-            )),
-            "iceberg" => Arc::new(IcebergAnalyzer::new(
-                Arc::clone(&self.storage_provider),
-                self.parallelism,
-            )),
-            "lance" => Arc::new(LanceAnalyzer::new(
-                Arc::clone(&self.storage_provider),
-                self.parallelism,
-            )),
-            _ => {
-                return Err(format!("Unknown or unsupported table type={}", table_type).into());
-            }
-        };
+            // Detect table type and instantiate appropriate analyzer
+            let table_type: String = measure_dur(
+                "detect_table_type",
+                &mut internal_metrics,
+                || detect_table_type(&all_objects),
+                Some(|t: String| format!("Detected table type={}", t)),
+            )
+            .await;
 
-        let (data_files, metadata_files) = measure_dur(
-            "categorize_files",
-            &mut internal_metrics,
-            || table_analyzer.categorize_files(all_objects.clone()),
-            Some(|(data, meta): (Vec<FileMetadata>, Vec<FileMetadata>)| {
-                format!(
-                    "Categorized data files count={}, metadata files count={}",
-                    data.len(),
-                    meta.len()
-                )
-            }),
-        )
-        .await;
+            // Instantiate the appropriate table analyzer based on detected type
+            let table_analyzer: Arc<dyn TableAnalyzer> = match table_type.as_str() {
+                #[cfg(feature = "delta")]
+                "delta" => Arc::new(DeltaAnalyzer::new(
+                    Arc::clone(&self.storage_provider),
+                    self.parallelism,
+                )),
+                #[cfg(not(feature = "delta"))]
+                "delta" => {
+                    return Err(
+                        "Delta Lake support is not enabled. Enable the 'delta' feature.".into(),
+                    );
+                }
+                #[cfg(feature = "hudi")]
+                "hudi" => Arc::new(HudiAnalyzer::new(
+                    Arc::clone(&self.storage_provider),
+                    self.parallelism,
+                )),
+                #[cfg(not(feature = "hudi"))]
+                "hudi" => {
+                    return Err(
+                        "Apache Hudi support is not enabled. Enable the 'hudi' feature.".into(),
+                    );
+                }
+                #[cfg(feature = "iceberg")]
+                "iceberg" => Arc::new(IcebergAnalyzer::new(
+                    Arc::clone(&self.storage_provider),
+                    self.parallelism,
+                )),
+                #[cfg(not(feature = "iceberg"))]
+                "iceberg" => {
+                    return Err(
+                        "Apache Iceberg support is not enabled. Enable the 'iceberg' feature."
+                            .into(),
+                    );
+                }
+                #[cfg(feature = "lance")]
+                "lance" => Arc::new(LanceAnalyzer::new(
+                    Arc::clone(&self.storage_provider),
+                    self.parallelism,
+                )),
+                #[cfg(not(feature = "lance"))]
+                "lance" => {
+                    return Err("Lance support is not enabled. Enable the 'lance' feature.".into());
+                }
+                _ => {
+                    return Err(format!("Unknown or unsupported table type={}", table_type).into());
+                }
+            };
 
-        let referenced_files = measure_dur_async(
-            "find_referenced_files",
-            &mut internal_metrics,
-            || async { table_analyzer.find_referenced_files(&metadata_files).await },
-            Some(|c: &Vec<String>| format!("Found referenced files, count={}", c.len())),
-        )
-        .await?;
-
-        metrics.total_files = data_files.len();
-        metrics.total_size_bytes = data_files.iter().map(|f| f.size).sum();
-
-        let referenced_set: HashSet<String> = referenced_files.into_iter().collect();
-        let unreferenced_files = measure_dur(
-            "find_unreferenced_files",
-            &mut internal_metrics,
-            || {
-                data_files
-                    .iter()
-                    .filter(|f| !referenced_set.iter().any(|i| f.path.contains(i)))
-                    .map(|f| FileInfo {
-                        path: format!("{}/{}", self.storage_provider.base_path(), f.path),
-                        size_bytes: f.size,
-                        last_modified: f.last_modified.map(|m| m.to_rfc3339()),
-                        is_referenced: false,
-                    })
-                    .collect::<Vec<FileInfo>>()
-            },
-            Some(|c: Vec<FileInfo>| format!("Found unreferenced files, count={}", c.len())),
-        )
-        .await;
-
-        metrics.unreferenced_files = unreferenced_files;
-        metrics.unreferenced_size_bytes = metrics
-            .unreferenced_files
-            .iter()
-            .map(|f| f.size_bytes)
-            .sum();
-
-        metrics.partitions = measure_dur_with_error(
-            "analyze_partitioning",
-            &mut internal_metrics,
-            || self.analyze_partitioning(&data_files),
-            Some(|c: &Vec<PartitionInfo>| format!("Analyzed partitions count={}", c.len())),
-        )?;
-
-        metrics.partition_count = metrics.partitions.len();
-
-        let data_files_total_size: u64 = data_files.iter().map(|f| f.size).sum();
-
-        measure_dur_async(
-            "update_metrics_from_metadata",
-            &mut internal_metrics,
-            || async {
-                table_analyzer
-                    .update_metrics_from_metadata(
-                        &metadata_files,
-                        data_files_total_size,
-                        data_files.len(),
-                        &mut metrics,
+            let (data_files, metadata_files) = measure_dur(
+                "categorize_files",
+                &mut internal_metrics,
+                || table_analyzer.categorize_files(all_objects.clone()),
+                Some(|(data, meta): (Vec<FileMetadata>, Vec<FileMetadata>)| {
+                    format!(
+                        "Categorized data files count={}, metadata files count={}",
+                        data.len(),
+                        meta.len()
                     )
-                    .await
-            },
-            Some(|_| "Updated metrics from metadata".to_string()),
-        )
-        .await?;
+                }),
+            )
+            .await;
 
-        let (small_files, medium_files, large_files, very_large_files) =
+            let referenced_files = measure_dur_async(
+                "find_referenced_files",
+                &mut internal_metrics,
+                || async { table_analyzer.find_referenced_files(&metadata_files).await },
+                Some(|c: &Vec<String>| format!("Found referenced files, count={}", c.len())),
+            )
+            .await?;
+
+            metrics.total_files = data_files.len();
+            metrics.total_size_bytes = data_files.iter().map(|f| f.size).sum();
+
+            let referenced_set: HashSet<String> = referenced_files.into_iter().collect();
+            let unreferenced_files = measure_dur(
+                "find_unreferenced_files",
+                &mut internal_metrics,
+                || {
+                    data_files
+                        .iter()
+                        .filter(|f| !referenced_set.iter().any(|i| f.path.contains(i)))
+                        .map(|f| FileInfo {
+                            path: format!("{}/{}", self.storage_provider.base_path(), f.path),
+                            size_bytes: f.size,
+                            last_modified: f.last_modified.map(|m| m.to_rfc3339()),
+                            is_referenced: false,
+                        })
+                        .collect::<Vec<FileInfo>>()
+                },
+                Some(|c: Vec<FileInfo>| format!("Found unreferenced files, count={}", c.len())),
+            )
+            .await;
+
+            metrics.unreferenced_files = unreferenced_files;
+            metrics.unreferenced_size_bytes = metrics
+                .unreferenced_files
+                .iter()
+                .map(|f| f.size_bytes)
+                .sum();
+
+            metrics.partitions = measure_dur_with_error(
+                "analyze_partitioning",
+                &mut internal_metrics,
+                || self.analyze_partitioning(&data_files),
+                Some(|c: &Vec<PartitionInfo>| format!("Analyzed partitions count={}", c.len())),
+            )?;
+
+            metrics.partition_count = metrics.partitions.len();
+
+            let data_files_total_size: u64 = data_files.iter().map(|f| f.size).sum();
+
+            measure_dur_async(
+                "update_metrics_from_metadata",
+                &mut internal_metrics,
+                || async {
+                    table_analyzer
+                        .update_metrics_from_metadata(
+                            &metadata_files,
+                            data_files_total_size,
+                            data_files.len(),
+                            &mut metrics,
+                        )
+                        .await
+                },
+                Some(|_| "Updated metrics from metadata".to_string()),
+            )
+            .await?;
+
+            let (small_files, medium_files, large_files, very_large_files) =
             measure_dur(
                 "calculate_file_size_distribution",
                 &mut internal_metrics,
@@ -457,17 +580,17 @@ impl Analyzer {
                 }),
             ).await;
 
-        metrics.file_size_distribution.small_files = small_files;
-        metrics.file_size_distribution.medium_files = medium_files;
-        metrics.file_size_distribution.large_files = large_files;
-        metrics.file_size_distribution.very_large_files = very_large_files;
+            metrics.file_size_distribution.small_files = small_files;
+            metrics.file_size_distribution.medium_files = medium_files;
+            metrics.file_size_distribution.large_files = large_files;
+            metrics.file_size_distribution.very_large_files = very_large_files;
 
-        if metrics.total_files > 0 {
-            metrics.avg_file_size_bytes =
-                metrics.total_size_bytes as f64 / metrics.total_files as f64;
-        }
+            if metrics.total_files > 0 {
+                metrics.avg_file_size_bytes =
+                    metrics.total_size_bytes as f64 / metrics.total_files as f64;
+            }
 
-        let (
+            let (
             metadata_file_count,
             metadata_total_size_bytes,
             avg_metadata_file_size,
@@ -484,182 +607,196 @@ impl Analyzer {
             }),
         ).await;
 
-        metrics.metadata_health.metadata_file_count = metadata_file_count;
-        metrics.metadata_health.metadata_total_size_bytes = metadata_total_size_bytes;
-        metrics.metadata_health.avg_metadata_file_size = avg_metadata_file_size;
-        metrics.metadata_health.metadata_growth_rate = metadata_growth_rate;
+            metrics.metadata_health.metadata_file_count = metadata_file_count;
+            metrics.metadata_health.metadata_total_size_bytes = metadata_total_size_bytes;
+            metrics.metadata_health.avg_metadata_file_size = avg_metadata_file_size;
+            metrics.metadata_health.metadata_growth_rate = metadata_growth_rate;
 
-        measure_dur(
-            "calculate_data_skew",
-            &mut internal_metrics,
-            || metrics.calculate_data_skew(),
-            None,
-        )
-        .await;
+            measure_dur(
+                "calculate_data_skew",
+                &mut internal_metrics,
+                || metrics.calculate_data_skew(),
+                None,
+            )
+            .await;
 
-        measure_dur(
-            "calculate_snapshot_health",
-            &mut internal_metrics,
-            || metrics.calculate_snapshot_health(metadata_files.len()),
-            None,
-        )
-        .await;
+            measure_dur(
+                "calculate_snapshot_health",
+                &mut internal_metrics,
+                || metrics.calculate_snapshot_health(metadata_files.len()),
+                None,
+            )
+            .await;
 
-        metrics.file_compaction = measure_dur_async(
-            "analyze_file_compaction",
-            &mut internal_metrics,
-            || async {
-                if let Some(file_compaction) = metrics.file_compaction.clone() {
-                    let z_order_opportunity = file_compaction.z_order_opportunity;
-                    let z_order_columns = file_compaction.z_order_columns;
-                    self.analyze_file_compaction(
-                        &data_files,
-                        z_order_opportunity,
-                        z_order_columns.clone(),
-                    )
-                    .await
-                } else {
-                    Ok(None)
-                }
-            },
-            Some(|_| "Calculated compaction metrics".to_string()),
-        )
-        .await?;
-
-        measure_dur(
-            "generate_recommendations",
-            &mut internal_metrics,
-            || metrics.generate_recommendations(),
-            Some(|_| "Generated recommendations".to_string()),
-        )
-        .await;
-
-        metrics.health_score = measure_dur(
-            "calculate_health_score",
-            &mut internal_metrics,
-            || metrics.calculate_health_score(),
-            Some(|score: f64| format!("Calculated health score={}", score)),
-        )
-        .await;
-
-        let table_path = self.storage_provider.uri_from_path(location);
-
-        let analyze_after_validation_dur = list_files_start.elapsed()?;
-        internal_metrics.push_back((
-            "analyze_after_validation_dur",
-            list_files_start,
-            analyze_after_validation_dur,
-        ));
-
-        info!("Analysis took={}", analyze_after_validation_dur.as_millis());
-
-        // Only try to open Delta reader for Delta tables
-        if table_type == "delta" {
-            measure_dur_async(
-                "delta_reader",
+            metrics.file_compaction = measure_dur_async(
+                "analyze_file_compaction",
                 &mut internal_metrics,
                 || async {
-                    let delta_reader = DeltaReader::open(
-                        self.storage_provider.uri_from_path(location).as_str(),
-                        &self.storage_provider.clean_options(),
-                    )
-                    .await;
-
-                    match delta_reader {
-                        Ok(reader) => {
-                            metrics.delta_table_specific_metrics =
-                                Some(reader.extract_metrics().await?);
-                            Ok(())
-                        }
-                        Err(e) => {
-                            warn!("Failed to open Delta reader: {}", e);
-                            Err(e)
-                        }
+                    if let Some(file_compaction) = metrics.file_compaction.clone() {
+                        let z_order_opportunity = file_compaction.z_order_opportunity;
+                        let z_order_columns = file_compaction.z_order_columns;
+                        self.analyze_file_compaction(
+                            &data_files,
+                            z_order_opportunity,
+                            z_order_columns.clone(),
+                        )
+                        .await
+                    } else {
+                        Ok(None)
                     }
                 },
-                Some(|_| "Opened Delta reader".to_string()),
+                Some(|_| "Calculated compaction metrics".to_string()),
             )
             .await?;
-        } else if table_type == "iceberg" {
-            measure_dur_async(
-                "iceberg_reader",
+
+            measure_dur(
+                "generate_recommendations",
                 &mut internal_metrics,
-                || async {
-                    let iceberg_reader = IcebergReader::open(
-                        self.storage_provider.uri_from_path(location).as_str(),
-                        &self.storage_provider.clean_options(),
-                    )
-                    .await;
-
-                    match iceberg_reader {
-                        Ok(reader) => {
-                            metrics.iceberg_table_specific_metrics =
-                                Some(reader.extract_metrics().await?);
-                            Ok(())
-                        }
-                        Err(e) => {
-                            warn!("Failed to open Iceberg reader: {}", e);
-                            Err(e)
-                        }
-                    }
-                },
-                Some(|_| "Opened Iceberg reader".to_string()),
+                || metrics.generate_recommendations(),
+                Some(|_| "Generated recommendations".to_string()),
             )
-            .await?;
-        } else if table_type == "hudi" {
-            measure_dur_async(
-                "hudi_reader",
+            .await;
+
+            metrics.health_score = measure_dur(
+                "calculate_health_score",
                 &mut internal_metrics,
-                || async {
-                    let hudi_reader = HudiReader::new(
-                        self.storage_provider.uri_from_path(location).as_str(),
-                        "COPY_ON_WRITE", // Default to COW, could be detected from hoodie.properties
-                    );
-
-                    match hudi_reader {
-                        Ok(reader) => {
-                            metrics.hudi_table_specific_metrics =
-                                Some(reader.extract_metrics().await?);
-                            Ok(())
-                        }
-                        Err(e) => {
-                            warn!("Failed to open Hudi reader: {}", e);
-                            Err(e)
-                        }
-                    }
-                },
-                Some(|_| "Opened Hudi reader".to_string()),
+                || metrics.calculate_health_score(),
+                Some(|score: f64| format!("Calculated health score={}", score)),
             )
-            .await?;
-        }
+            .await;
 
-        let timed_metrics: LinkedList<(String, u128, u128)> = internal_metrics
-            .iter()
-            .map(
-                |(k, st, dur)| -> Result<(String, u128, u128), Box<dyn Error + Send + Sync>> {
-                    Ok((
-                        k.to_string(),
-                        st.duration_since(UNIX_EPOCH)?.as_millis(),
-                        dur.as_millis(),
-                    ))
+            let table_path = self.storage_provider.uri_from_path(location);
+
+            let analyze_after_validation_dur = list_files_start.elapsed()?;
+            internal_metrics.push_back((
+                "analyze_after_validation_dur",
+                list_files_start,
+                analyze_after_validation_dur,
+            ));
+
+            info!("Analysis took={}", analyze_after_validation_dur.as_millis());
+
+            // Only try to open format-specific readers when the feature is enabled
+            #[cfg(feature = "delta")]
+            if table_type == "delta" {
+                measure_dur_async(
+                    "delta_reader",
+                    &mut internal_metrics,
+                    || async {
+                        let delta_reader = DeltaReader::open(
+                            self.storage_provider.uri_from_path(location).as_str(),
+                            &self.storage_provider.clean_options(),
+                        )
+                        .await;
+
+                        match delta_reader {
+                            Ok(reader) => {
+                                metrics.delta_table_specific_metrics =
+                                    Some(reader.extract_metrics().await?);
+                                Ok(())
+                            }
+                            Err(e) => {
+                                warn!("Failed to open Delta reader: {}", e);
+                                Err(e)
+                            }
+                        }
+                    },
+                    Some(|_| "Opened Delta reader".to_string()),
+                )
+                .await?;
+            }
+
+            #[cfg(feature = "iceberg")]
+            if table_type == "iceberg" {
+                measure_dur_async(
+                    "iceberg_reader",
+                    &mut internal_metrics,
+                    || async {
+                        let iceberg_reader = IcebergReader::open(
+                            self.storage_provider.uri_from_path(location).as_str(),
+                            &self.storage_provider.clean_options(),
+                        )
+                        .await;
+
+                        match iceberg_reader {
+                            Ok(reader) => {
+                                metrics.iceberg_table_specific_metrics =
+                                    Some(reader.extract_metrics().await?);
+                                Ok(())
+                            }
+                            Err(e) => {
+                                warn!("Failed to open Iceberg reader: {}", e);
+                                Err(e)
+                            }
+                        }
+                    },
+                    Some(|_| "Opened Iceberg reader".to_string()),
+                )
+                .await?;
+            }
+
+            #[cfg(feature = "hudi")]
+            if table_type == "hudi" {
+                measure_dur_async(
+                    "hudi_reader",
+                    &mut internal_metrics,
+                    || async {
+                        let hudi_reader = HudiReader::new(
+                            self.storage_provider.uri_from_path(location).as_str(),
+                            "COPY_ON_WRITE", // Default to COW, could be detected from hoodie.properties
+                        );
+
+                        match hudi_reader {
+                            Ok(reader) => {
+                                metrics.hudi_table_specific_metrics =
+                                    Some(reader.extract_metrics().await?);
+                                Ok(())
+                            }
+                            Err(e) => {
+                                warn!("Failed to open Hudi reader: {}", e);
+                                Err(e)
+                            }
+                        }
+                    },
+                    Some(|_| "Opened Hudi reader".to_string()),
+                )
+                .await?;
+            }
+
+            let timed_metrics: LinkedList<(String, u128, u128)> = internal_metrics
+                .iter()
+                .map(
+                    |(k, st, dur)| -> Result<(String, u128, u128), Box<dyn Error + Send + Sync>> {
+                        Ok((
+                            k.to_string(),
+                            st.duration_since(UNIX_EPOCH)?.as_millis(),
+                            dur.as_millis(),
+                        ))
+                    },
+                )
+                .collect::<Result<LinkedList<(_, _, _)>, _>>()?;
+
+            let report = HealthReport {
+                table_path,
+                table_type,
+                analysis_timestamp: chrono::Utc::now().to_rfc3339(),
+                metrics: metrics.clone(),
+                health_score: metrics.health_score,
+                timed_metrics: TimedLikeMetrics {
+                    duration_collection: timed_metrics,
                 },
-            )
-            .collect::<Result<LinkedList<(_, _, _)>, _>>()?;
+            };
 
-        let report = HealthReport {
-            table_path,
-            table_type,
-            analysis_timestamp: chrono::Utc::now().to_rfc3339(),
-            metrics: metrics.clone(),
-            health_score: metrics.health_score,
-            timed_metrics: TimedLikeMetrics {
-                duration_collection: timed_metrics,
-            },
-        };
-
-        Ok(report)
+            Ok(report)
+        } // End of #[cfg(any(feature = "delta", feature = "iceberg", feature = "hudi", feature = "lance"))]
     }
 
+    #[cfg(any(
+        feature = "delta",
+        feature = "iceberg",
+        feature = "hudi",
+        feature = "lance"
+    ))]
     fn analyze_partitioning(
         &self,
         data_files: &Vec<FileMetadata>,
@@ -720,6 +857,12 @@ impl Analyzer {
         Ok(partitions)
     }
 
+    #[cfg(any(
+        feature = "delta",
+        feature = "iceberg",
+        feature = "hudi",
+        feature = "lance"
+    ))]
     fn calculate_file_size_distribution(
         &self,
         data_files: &Vec<FileMetadata>,
@@ -758,6 +901,12 @@ impl Analyzer {
     /// * `u64` - Total metadata size in bytes
     /// * `f64` - Metadata health score (average file size)
     /// * `f64` - Metadata growth rate (currently placeholder, returns 0.0)
+    #[cfg(any(
+        feature = "delta",
+        feature = "iceberg",
+        feature = "hudi",
+        feature = "lance"
+    ))]
     pub fn calculate_metadata_health(
         &self,
         metadata_files: &[FileMetadata],
@@ -781,6 +930,12 @@ impl Analyzer {
         )
     }
 
+    #[cfg(any(
+        feature = "delta",
+        feature = "iceberg",
+        feature = "hudi",
+        feature = "lance"
+    ))]
     async fn analyze_file_compaction(
         &self,
         data_files: &Vec<FileMetadata>,
@@ -836,6 +991,12 @@ impl Analyzer {
         }))
     }
 
+    #[cfg(any(
+        feature = "delta",
+        feature = "iceberg",
+        feature = "hudi",
+        feature = "lance"
+    ))]
     fn calculate_compaction_opportunity(
         &self,
         small_files: usize,
@@ -862,6 +1023,12 @@ impl Analyzer {
         }
     }
 
+    #[cfg(any(
+        feature = "delta",
+        feature = "iceberg",
+        feature = "hudi",
+        feature = "lance"
+    ))]
     fn calculate_recommended_target_size(&self, data_files: &[FileMetadata]) -> u64 {
         if data_files.is_empty() {
             return 128 * 1024 * 1024; // 128MB default
@@ -880,6 +1047,12 @@ impl Analyzer {
         }
     }
 
+    #[cfg(any(
+        feature = "delta",
+        feature = "iceberg",
+        feature = "hudi",
+        feature = "lance"
+    ))]
     fn calculate_compaction_priority(&self, opportunity_score: f64, small_files: usize) -> String {
         if opportunity_score > 0.8 || small_files > 100 {
             "critical".to_string()
@@ -896,17 +1069,60 @@ impl Analyzer {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[cfg(any(
+        feature = "delta",
+        feature = "iceberg",
+        feature = "hudi",
+        feature = "lance"
+    ))]
     use crate::storage::error::StorageResult;
+    #[cfg(any(
+        feature = "delta",
+        feature = "iceberg",
+        feature = "hudi",
+        feature = "lance"
+    ))]
     use crate::storage::{FileMetadata, StorageProvider};
+    #[cfg(any(
+        feature = "delta",
+        feature = "iceberg",
+        feature = "hudi",
+        feature = "lance"
+    ))]
     use async_trait::async_trait;
+    #[cfg(any(
+        feature = "delta",
+        feature = "iceberg",
+        feature = "hudi",
+        feature = "lance"
+    ))]
     use chrono::Utc;
+    #[cfg(any(
+        feature = "delta",
+        feature = "iceberg",
+        feature = "hudi",
+        feature = "lance"
+    ))]
+    use std::collections::HashMap;
 
     // Mock storage provider for testing
+    #[cfg(any(
+        feature = "delta",
+        feature = "iceberg",
+        feature = "hudi",
+        feature = "lance"
+    ))]
     struct MockStorageProvider {
         base_path: String,
         options: HashMap<String, String>,
     }
 
+    #[cfg(any(
+        feature = "delta",
+        feature = "iceberg",
+        feature = "hudi",
+        feature = "lance"
+    ))]
     #[async_trait]
     impl StorageProvider for MockStorageProvider {
         fn base_path(&self) -> &str {
@@ -972,6 +1188,12 @@ mod tests {
     }
 
     // Configurable mock for testing analyze() method
+    #[cfg(any(
+        feature = "delta",
+        feature = "iceberg",
+        feature = "hudi",
+        feature = "lance"
+    ))]
     struct ConfigurableMockStorageProvider {
         base_path: String,
         options: HashMap<String, String>,
@@ -979,6 +1201,12 @@ mod tests {
         file_contents: HashMap<String, Vec<u8>>,
     }
 
+    #[cfg(any(
+        feature = "delta",
+        feature = "iceberg",
+        feature = "hudi",
+        feature = "lance"
+    ))]
     #[async_trait]
     impl StorageProvider for ConfigurableMockStorageProvider {
         fn base_path(&self) -> &str {
@@ -1053,6 +1281,12 @@ mod tests {
     }
 
     // Helper function to create a mock Analyzer for testing
+    #[cfg(any(
+        feature = "delta",
+        feature = "iceberg",
+        feature = "hudi",
+        feature = "lance"
+    ))]
     fn create_mock_analyzer() -> Analyzer {
         Analyzer {
             storage_provider: Arc::new(MockStorageProvider {
@@ -1063,6 +1297,12 @@ mod tests {
         }
     }
 
+    #[cfg(any(
+        feature = "delta",
+        feature = "iceberg",
+        feature = "hudi",
+        feature = "lance"
+    ))]
     fn create_file_metadata(path: &str, size: u64) -> FileMetadata {
         FileMetadata {
             path: path.to_string(),
@@ -1100,6 +1340,12 @@ mod tests {
     }
 
     // calculate_file_size_distribution tests
+    #[cfg(any(
+        feature = "delta",
+        feature = "iceberg",
+        feature = "hudi",
+        feature = "lance"
+    ))]
     #[test]
     fn test_calculate_file_size_distribution_empty() {
         let analyzer = create_mock_analyzer();
@@ -1113,6 +1359,12 @@ mod tests {
         assert_eq!(very_large, 0);
     }
 
+    #[cfg(any(
+        feature = "delta",
+        feature = "iceberg",
+        feature = "hudi",
+        feature = "lance"
+    ))]
     #[test]
     fn test_calculate_file_size_distribution_small_files() {
         let analyzer = create_mock_analyzer();
@@ -1130,6 +1382,12 @@ mod tests {
         assert_eq!(very_large, 0);
     }
 
+    #[cfg(any(
+        feature = "delta",
+        feature = "iceberg",
+        feature = "hudi",
+        feature = "lance"
+    ))]
     #[test]
     fn test_calculate_file_size_distribution_medium_files() {
         let analyzer = create_mock_analyzer();
@@ -1147,6 +1405,12 @@ mod tests {
         assert_eq!(very_large, 0);
     }
 
+    #[cfg(any(
+        feature = "delta",
+        feature = "iceberg",
+        feature = "hudi",
+        feature = "lance"
+    ))]
     #[test]
     fn test_calculate_file_size_distribution_large_files() {
         let analyzer = create_mock_analyzer();
@@ -1164,6 +1428,12 @@ mod tests {
         assert_eq!(very_large, 0);
     }
 
+    #[cfg(any(
+        feature = "delta",
+        feature = "iceberg",
+        feature = "hudi",
+        feature = "lance"
+    ))]
     #[test]
     fn test_calculate_file_size_distribution_very_large_files() {
         let analyzer = create_mock_analyzer();
@@ -1180,6 +1450,12 @@ mod tests {
         assert_eq!(very_large, 2); // All >= 1024MB
     }
 
+    #[cfg(any(
+        feature = "delta",
+        feature = "iceberg",
+        feature = "hudi",
+        feature = "lance"
+    ))]
     #[test]
     fn test_calculate_file_size_distribution_mixed() {
         let analyzer = create_mock_analyzer();
@@ -1199,6 +1475,12 @@ mod tests {
     }
 
     // calculate_metadata_health tests
+    #[cfg(any(
+        feature = "delta",
+        feature = "iceberg",
+        feature = "hudi",
+        feature = "lance"
+    ))]
     #[test]
     fn test_calculate_metadata_health_empty() {
         let analyzer = create_mock_analyzer();
@@ -1212,6 +1494,12 @@ mod tests {
         assert_eq!(growth_rate, 0.0);
     }
 
+    #[cfg(any(
+        feature = "delta",
+        feature = "iceberg",
+        feature = "hudi",
+        feature = "lance"
+    ))]
     #[test]
     fn test_calculate_metadata_health_single_file() {
         let analyzer = create_mock_analyzer();
@@ -1225,6 +1513,12 @@ mod tests {
         assert_eq!(growth_rate, 0.0); // Placeholder
     }
 
+    #[cfg(any(
+        feature = "delta",
+        feature = "iceberg",
+        feature = "hudi",
+        feature = "lance"
+    ))]
     #[test]
     fn test_calculate_metadata_health_multiple_files() {
         let analyzer = create_mock_analyzer();
@@ -1243,6 +1537,12 @@ mod tests {
     }
 
     // calculate_compaction_opportunity tests
+    #[cfg(any(
+        feature = "delta",
+        feature = "iceberg",
+        feature = "hudi",
+        feature = "lance"
+    ))]
     #[test]
     fn test_calculate_compaction_opportunity_no_files() {
         let analyzer = create_mock_analyzer();
@@ -1252,6 +1552,12 @@ mod tests {
         assert_eq!(score, 0.0);
     }
 
+    #[cfg(any(
+        feature = "delta",
+        feature = "iceberg",
+        feature = "hudi",
+        feature = "lance"
+    ))]
     #[test]
     fn test_calculate_compaction_opportunity_no_small_files() {
         let analyzer = create_mock_analyzer();
@@ -1261,6 +1567,12 @@ mod tests {
         assert_eq!(score, 0.2); // 0% small files
     }
 
+    #[cfg(any(
+        feature = "delta",
+        feature = "iceberg",
+        feature = "hudi",
+        feature = "lance"
+    ))]
     #[test]
     fn test_calculate_compaction_opportunity_low() {
         let analyzer = create_mock_analyzer();
@@ -1270,6 +1582,12 @@ mod tests {
         assert_eq!(score, 0.4); // 25% small files
     }
 
+    #[cfg(any(
+        feature = "delta",
+        feature = "iceberg",
+        feature = "hudi",
+        feature = "lance"
+    ))]
     #[test]
     fn test_calculate_compaction_opportunity_medium() {
         let analyzer = create_mock_analyzer();
@@ -1279,6 +1597,12 @@ mod tests {
         assert_eq!(score, 0.6); // 50% small files
     }
 
+    #[cfg(any(
+        feature = "delta",
+        feature = "iceberg",
+        feature = "hudi",
+        feature = "lance"
+    ))]
     #[test]
     fn test_calculate_compaction_opportunity_high() {
         let analyzer = create_mock_analyzer();
@@ -1288,6 +1612,12 @@ mod tests {
         assert_eq!(score, 0.8); // 70% small files
     }
 
+    #[cfg(any(
+        feature = "delta",
+        feature = "iceberg",
+        feature = "hudi",
+        feature = "lance"
+    ))]
     #[test]
     fn test_calculate_compaction_opportunity_critical() {
         let analyzer = create_mock_analyzer();
@@ -1298,6 +1628,12 @@ mod tests {
     }
 
     // calculate_recommended_target_size tests
+    #[cfg(any(
+        feature = "delta",
+        feature = "iceberg",
+        feature = "hudi",
+        feature = "lance"
+    ))]
     #[test]
     fn test_calculate_recommended_target_size_empty() {
         let analyzer = create_mock_analyzer();
@@ -1308,6 +1644,12 @@ mod tests {
         assert_eq!(target_size, 128 * 1024 * 1024); // 128MB default
     }
 
+    #[cfg(any(
+        feature = "delta",
+        feature = "iceberg",
+        feature = "hudi",
+        feature = "lance"
+    ))]
     #[test]
     fn test_calculate_recommended_target_size_small_avg() {
         let analyzer = create_mock_analyzer();
@@ -1321,6 +1663,12 @@ mod tests {
         assert_eq!(target_size, 128 * 1024 * 1024); // 128MB for small avg
     }
 
+    #[cfg(any(
+        feature = "delta",
+        feature = "iceberg",
+        feature = "hudi",
+        feature = "lance"
+    ))]
     #[test]
     fn test_calculate_recommended_target_size_medium_avg() {
         let analyzer = create_mock_analyzer();
@@ -1334,6 +1682,12 @@ mod tests {
         assert_eq!(target_size, 256 * 1024 * 1024); // 256MB for medium avg
     }
 
+    #[cfg(any(
+        feature = "delta",
+        feature = "iceberg",
+        feature = "hudi",
+        feature = "lance"
+    ))]
     #[test]
     fn test_calculate_recommended_target_size_large_avg() {
         let analyzer = create_mock_analyzer();
@@ -1348,6 +1702,12 @@ mod tests {
     }
 
     // calculate_compaction_priority tests
+    #[cfg(any(
+        feature = "delta",
+        feature = "iceberg",
+        feature = "hudi",
+        feature = "lance"
+    ))]
     #[test]
     fn test_calculate_compaction_priority_low() {
         let analyzer = create_mock_analyzer();
@@ -1357,6 +1717,12 @@ mod tests {
         assert_eq!(priority, "low");
     }
 
+    #[cfg(any(
+        feature = "delta",
+        feature = "iceberg",
+        feature = "hudi",
+        feature = "lance"
+    ))]
     #[test]
     fn test_calculate_compaction_priority_medium() {
         let analyzer = create_mock_analyzer();
@@ -1366,6 +1732,12 @@ mod tests {
         assert_eq!(priority, "medium");
     }
 
+    #[cfg(any(
+        feature = "delta",
+        feature = "iceberg",
+        feature = "hudi",
+        feature = "lance"
+    ))]
     #[test]
     fn test_calculate_compaction_priority_high_by_score() {
         let analyzer = create_mock_analyzer();
@@ -1375,6 +1747,12 @@ mod tests {
         assert_eq!(priority, "high");
     }
 
+    #[cfg(any(
+        feature = "delta",
+        feature = "iceberg",
+        feature = "hudi",
+        feature = "lance"
+    ))]
     #[test]
     fn test_calculate_compaction_priority_high_by_count() {
         let analyzer = create_mock_analyzer();
@@ -1384,6 +1762,12 @@ mod tests {
         assert_eq!(priority, "high");
     }
 
+    #[cfg(any(
+        feature = "delta",
+        feature = "iceberg",
+        feature = "hudi",
+        feature = "lance"
+    ))]
     #[test]
     fn test_calculate_compaction_priority_critical_by_score() {
         let analyzer = create_mock_analyzer();
@@ -1393,6 +1777,12 @@ mod tests {
         assert_eq!(priority, "critical");
     }
 
+    #[cfg(any(
+        feature = "delta",
+        feature = "iceberg",
+        feature = "hudi",
+        feature = "lance"
+    ))]
     #[test]
     fn test_calculate_compaction_priority_critical_by_count() {
         let analyzer = create_mock_analyzer();
@@ -1403,6 +1793,12 @@ mod tests {
     }
 
     // analyze_partitioning tests
+    #[cfg(any(
+        feature = "delta",
+        feature = "iceberg",
+        feature = "hudi",
+        feature = "lance"
+    ))]
     #[test]
     fn test_analyze_partitioning_empty() {
         let analyzer = create_mock_analyzer();
@@ -1415,6 +1811,12 @@ mod tests {
         assert_eq!(partitions.len(), 0);
     }
 
+    #[cfg(any(
+        feature = "delta",
+        feature = "iceberg",
+        feature = "hudi",
+        feature = "lance"
+    ))]
     #[test]
     fn test_analyze_partitioning_no_partitions() {
         let analyzer = create_mock_analyzer();
@@ -1434,6 +1836,12 @@ mod tests {
         assert_eq!(partitions[0].avg_file_size_bytes, 1536.0);
     }
 
+    #[cfg(any(
+        feature = "delta",
+        feature = "iceberg",
+        feature = "hudi",
+        feature = "lance"
+    ))]
     #[test]
     fn test_analyze_partitioning_single_partition_column() {
         let analyzer = create_mock_analyzer();
@@ -1470,6 +1878,12 @@ mod tests {
         assert_eq!(partition_2023.avg_file_size_bytes, 3072.0);
     }
 
+    #[cfg(any(
+        feature = "delta",
+        feature = "iceberg",
+        feature = "hudi",
+        feature = "lance"
+    ))]
     #[test]
     fn test_analyze_partitioning_multiple_partition_columns() {
         let analyzer = create_mock_analyzer();
@@ -1509,6 +1923,12 @@ mod tests {
         assert_eq!(total_size, 10240); // 1024 + 2048 + 3072 + 4096
     }
 
+    #[cfg(any(
+        feature = "delta",
+        feature = "iceberg",
+        feature = "hudi",
+        feature = "lance"
+    ))]
     #[test]
     fn test_analyze_partitioning_mixed_partitioned_and_unpartitioned() {
         let analyzer = create_mock_analyzer();
@@ -1524,6 +1944,12 @@ mod tests {
         assert_eq!(partitions.len(), 2); // One partitioned, one unpartitioned
     }
 
+    #[cfg(any(
+        feature = "delta",
+        feature = "iceberg",
+        feature = "hudi",
+        feature = "lance"
+    ))]
     #[test]
     fn test_analyze_partitioning_file_info_populated() {
         let analyzer = create_mock_analyzer();
@@ -1549,6 +1975,12 @@ mod tests {
         }
     }
 
+    #[cfg(any(
+        feature = "delta",
+        feature = "iceberg",
+        feature = "hudi",
+        feature = "lance"
+    ))]
     #[test]
     fn test_analyze_partitioning_avg_calculation() {
         let analyzer = create_mock_analyzer();
@@ -1617,6 +2049,12 @@ mod tests {
     }
 
     // Test analyze_file_compaction async method
+    #[cfg(any(
+        feature = "delta",
+        feature = "iceberg",
+        feature = "hudi",
+        feature = "lance"
+    ))]
     #[tokio::test]
     async fn test_analyze_file_compaction_empty_files() {
         let analyzer = create_mock_analyzer();
@@ -1636,6 +2074,12 @@ mod tests {
         assert!(metrics.z_order_columns.is_empty());
     }
 
+    #[cfg(any(
+        feature = "delta",
+        feature = "iceberg",
+        feature = "hudi",
+        feature = "lance"
+    ))]
     #[tokio::test]
     async fn test_analyze_file_compaction_small_files() {
         let analyzer = create_mock_analyzer();
@@ -1660,6 +2104,12 @@ mod tests {
         assert_eq!(metrics.compaction_priority, "critical"); // 100% small files
     }
 
+    #[cfg(any(
+        feature = "delta",
+        feature = "iceberg",
+        feature = "hudi",
+        feature = "lance"
+    ))]
     #[tokio::test]
     async fn test_analyze_file_compaction_mixed_files() {
         let analyzer = create_mock_analyzer();
@@ -1681,6 +2131,12 @@ mod tests {
         assert_eq!(metrics.potential_compaction_files, 2);
     }
 
+    #[cfg(any(
+        feature = "delta",
+        feature = "iceberg",
+        feature = "hudi",
+        feature = "lance"
+    ))]
     #[tokio::test]
     async fn test_analyze_file_compaction_with_z_order() {
         let analyzer = create_mock_analyzer();
@@ -1700,6 +2156,12 @@ mod tests {
         assert_eq!(metrics.z_order_columns, z_order_columns);
     }
 
+    #[cfg(any(
+        feature = "delta",
+        feature = "iceberg",
+        feature = "hudi",
+        feature = "lance"
+    ))]
     #[tokio::test]
     async fn test_analyze_file_compaction_no_small_files() {
         let analyzer = create_mock_analyzer();
@@ -1720,6 +2182,12 @@ mod tests {
         assert_eq!(metrics.compaction_priority, "low");
     }
 
+    #[cfg(any(
+        feature = "delta",
+        feature = "iceberg",
+        feature = "hudi",
+        feature = "lance"
+    ))]
     #[tokio::test]
     async fn test_analyze_file_compaction_single_small_file() {
         let analyzer = create_mock_analyzer();
@@ -1737,6 +2205,12 @@ mod tests {
     }
 
     // Test Analyzer::analyze() method with unknown table type
+    #[cfg(any(
+        feature = "delta",
+        feature = "iceberg",
+        feature = "hudi",
+        feature = "lance"
+    ))]
     #[tokio::test]
     async fn test_analyze_unknown_table_type() {
         // Create mock with generic parquet files (no delta/iceberg markers)
@@ -1766,6 +2240,7 @@ mod tests {
     }
 
     // Test Analyzer::analyze() with Delta table files
+    #[cfg(feature = "delta")]
     #[tokio::test]
     async fn test_analyze_delta_table() {
         // Create mock with Delta table structure
@@ -1814,6 +2289,7 @@ mod tests {
     }
 
     // Test Analyzer::analyze() with Iceberg table files
+    #[cfg(feature = "iceberg")]
     #[tokio::test]
     async fn test_analyze_iceberg_table() {
         // Create mock with Iceberg table structure

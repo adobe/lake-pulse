@@ -98,13 +98,57 @@ jobs:
       - name: Run examples
         run: |
           echo "Running local store examples..."
-          cargo run --example local_store
-          cargo run --example local_store_custom
-          cargo run --example local_store_hudi
-          cargo run --example local_store_iceberg
-          cargo run --example local_store_json
-          cargo run --example local_store_lance
-          cargo run --example local_store_synthetic_deletion_vectors
+          cargo run --all-features --example local_store
+          cargo run --all-features --example local_store_custom
+          cargo run --all-features --example local_store_hudi
+          cargo run --all-features --example local_store_iceberg
+          cargo run --all-features --example local_store_json
+          cargo run --all-features --example local_store_lance
+          cargo run --all-features --example local_store_synthetic_deletion_vectors
+
+  test-features:
+    name: Test Feature Combinations
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        features:
+          - ""  # no features (should still compile)
+          - "delta"
+          - "iceberg"
+          - "hudi"
+          - "lance"
+          - "delta,iceberg"  # default features
+          - "hudi,lance"  # experimental features
+          - "delta,iceberg,hudi,lance"  # all features
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Install protobuf compiler
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y protobuf-compiler
+
+      - name: Setup Rust toolchain
+        uses: actions-rust-lang/setup-rust-toolchain@v1
+
+      - name: Build with features '${{ matrix.features }}'
+        run: |
+          if [ -z "${{ matrix.features }}" ]; then
+            cargo build --no-default-features --workspace
+          else
+            cargo build --no-default-features --features "${{ matrix.features }}" --workspace
+          fi
+
+      - name: Test with features '${{ matrix.features }}'
+        run: |
+          if [ -z "${{ matrix.features }}" ]; then
+            cargo test --no-default-features --workspace
+          else
+            cargo test --no-default-features --features "${{ matrix.features }}" --workspace
+          fi
+        env:
+          RUST_LOG: DEBUG
+          RUST_BACKTRACE: full
 
   test-platforms:
     name: Test on ${{ matrix.os }}
@@ -178,6 +222,7 @@ jobs:
     needs:
       - check
       - test
+      - test-features
       - test-platforms
       - coverage
     steps:
@@ -186,6 +231,7 @@ jobs:
           if [[ ! ( \
                  "${{ needs.check.result }}" == "success" \
               && "${{ needs.test.result }}" == "success" \
+              && "${{ needs.test-features.result }}" == "success" \
               && "${{ needs.test-platforms.result }}" == "success" \
               && "${{ needs.coverage.result }}" == "success" \
               ) ]]; then

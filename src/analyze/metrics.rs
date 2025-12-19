@@ -11,11 +11,15 @@
 // specific language governing permissions and limitations under
 // each license.
 
+#[cfg(feature = "delta")]
 use crate::reader::delta::metrics::DeltaMetrics;
+#[cfg(feature = "hudi")]
 use crate::reader::hudi::metrics::HudiMetrics;
+#[cfg(feature = "iceberg")]
 use crate::reader::iceberg::metrics::IcebergMetrics;
 use crate::util::ascii_gantt::to_ascii_gantt;
 use crate::util::ascii_gantt::GanttConfig;
+#[cfg(feature = "delta")]
 use chrono::DateTime;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Error as JsonError};
@@ -210,10 +214,13 @@ pub struct HealthMetrics {
     /// File compaction opportunity metrics
     pub file_compaction: Option<FileCompactionMetrics>,
     /// Delta Lake specific metrics
+    #[cfg(feature = "delta")]
     pub delta_table_specific_metrics: Option<DeltaMetrics>,
     /// Apache Hudi specific metrics
+    #[cfg(feature = "hudi")]
     pub hudi_table_specific_metrics: Option<HudiMetrics>,
     /// Apache Iceberg specific metrics
+    #[cfg(feature = "iceberg")]
     pub iceberg_table_specific_metrics: Option<IcebergMetrics>,
 }
 
@@ -1081,6 +1088,7 @@ impl Display for HealthReport {
         }
 
         // Delta Specific Metrics (full width)
+        #[cfg(feature = "delta")]
         if let Some(ref delta_metrics) = report.metrics.delta_table_specific_metrics {
             writeln!(f)?;
             writeln!(f, " Delta Specific Metrics")?;
@@ -1331,8 +1339,11 @@ impl HealthMetrics {
             time_travel_metrics: None,
             table_constraints: None,
             file_compaction: None,
+            #[cfg(feature = "delta")]
             delta_table_specific_metrics: None,
+            #[cfg(feature = "hudi")]
             hudi_table_specific_metrics: None,
+            #[cfg(feature = "iceberg")]
             iceberg_table_specific_metrics: None,
         }
     }

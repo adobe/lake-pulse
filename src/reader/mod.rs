@@ -19,12 +19,16 @@
 //!
 //! ## Supported Formats
 //!
-//! - [`delta`] - Delta Lake format reader
-//! - [`iceberg`] - Apache Iceberg format reader
-//! - [`hudi`] - Apache Hudi format reader
-//! - [`lance`] - Lance format reader
+//! - [`delta`] - Delta Lake format reader (requires `delta` feature)
+//! - [`iceberg`] - Apache Iceberg format reader (requires `iceberg` feature)
+//! - [`hudi`] - Apache Hudi format reader (requires `hudi` feature)
+//! - [`lance`] - Lance format reader (requires `lance` feature)
 
+#[cfg(feature = "delta")]
 pub mod delta;
+#[cfg(feature = "hudi")]
 pub mod hudi;
+#[cfg(feature = "iceberg")]
 pub mod iceberg;
+#[cfg(feature = "lance")]
 pub mod lance;

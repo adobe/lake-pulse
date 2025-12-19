@@ -26,6 +26,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Builder pattern API for analyzer configuration
 - Pretty-printed report output
 - Examples for all supported table formats and storage providers
+- Feature flags for conditional compilation of table format support:
+  - `delta` - Delta Lake support (included in default)
+  - `iceberg` - Apache Iceberg support (included in default)
+  - `hudi` - Apache Hudi support
+  - `lance` - Lance support
+  - `experimental` - Combines `hudi` + `lance`
+  - `default` - Combines `delta` + `iceberg`
 
 [Unreleased]: https://github.com/yourusername/lake-pulse/compare/v0.1.0...HEAD
 [0.1.0]: https://github.com/yourusername/lake-pulse/releases/tag/v0.1.0
