@@ -36,6 +36,7 @@ on:
       - '*.png'
       - '*.jpg'
       - '*.gif'
+  workflow_dispatch:
 
 # Concurrency strategy:
 #   github.workflow: distinguish this workflow from others
