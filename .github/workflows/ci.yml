@@ -50,6 +50,15 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  license-header:
+    name: License Header
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Check License Header
+        uses: korandoru/hawkeye@v6
+
   check:
     name: Check
     runs-on: ubuntu-latest
@@ -202,6 +211,7 @@ jobs:
     runs-on: ubuntu-latest
     if: always()
     needs:
+      - license-header
       - check
       - test
       - test-examples
@@ -211,7 +221,8 @@ jobs:
       - name: Guardian
         run: |
           if [[ ! ( \
-                 "${{ needs.check.result }}" == "success" \
+                 "${{ needs.license-header.result }}" == "success" \
+              && "${{ needs.check.result }}" == "success" \
               && "${{ needs.test.result }}" == "success" \
               && "${{ needs.test-examples.result }}" == "success" \
               && "${{ needs.test-platforms.result }}" == "success" \
