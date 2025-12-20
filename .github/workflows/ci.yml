@@ -130,6 +130,9 @@ jobs:
       - name: Setup Rust toolchain
         uses: actions-rust-lang/setup-rust-toolchain@v1
 
+      - name: Fix Iceberg metadata paths
+        run: ./examples/data/iceberg_dataset/fix_paths.sh
+
       - name: Run examples
         run: |
           echo "Running local store examples..."

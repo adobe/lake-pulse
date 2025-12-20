@@ -1,7 +1,7 @@
 {
   "format-version" : 2,
   "table-uuid" : "78c02dcd-591b-4d54-bebb-2e566a44b7d3",
-  "location" : "file:///Users/aionescu/git-adobe/AEP/lake-health/examples/data/iceberg_dataset",
+  "location" : "file://<ICEBERG_TABLE_PATH>",
   "last-sequence-number" : 0,
   "last-updated-ms" : 1762794084031,
   "last-column-id" : 3,
