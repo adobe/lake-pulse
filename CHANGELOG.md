@@ -27,6 +27,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Pretty-printed report output
 - Examples for all supported table formats and storage providers
 
-[Unreleased]: https://github.com/yourusername/lake-pulse/compare/v0.1.0...HEAD
-[0.1.0]: https://github.com/yourusername/lake-pulse/releases/tag/v0.1.0
+[Unreleased]: https://github.com/adobe/lake-pulse/compare/v0.1.0...HEAD
+[0.1.0]: https://github.com/adobe/lake-pulse/releases/tag/v0.1.0
 

@@ -2,6 +2,25 @@
 
 This is a document to help create different datasets for testing purposes.
 
+This document uses Spark to create the datasets. You can use any other tool
+to create the datasets. The important part is to create the datasets with
+the correct structure and files.
+
+Be aware that there are already some tables created in the `data` folder that
+can be used for testing purposes.
+
+> **Note:** Iceberg metadata files contain placeholders instead of paths.
+> This is an Iceberg limitation that is intended. After cloning the
+> repository, you need to run the path fix script to update these paths for
+> your machine:
+>
+> ```bash
+> cd examples/data/iceberg_dataset
+> ./fix_paths.sh
+> ```
+>
+> This only needs to be done once after cloning.
+
 ## Delta Lake
 
 First, set your absolute path where you want to create the dataset,

@@ -92,7 +92,7 @@
 //! # }
 //! ```
 //!
-//! For more examples, see the [`examples/`](https://github.com/aionescu_adobe/lake-pulse/tree/main/examples) directory.
+//! For more examples, see the [`examples/`](https://github.com/adobe/lake-pulse/tree/main/examples) directory.
 //!
 //! ## Modules
 //!

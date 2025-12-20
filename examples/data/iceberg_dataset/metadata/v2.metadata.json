@@ -1,7 +1,7 @@
 {
   "format-version" : 2,
   "table-uuid" : "78c02dcd-591b-4d54-bebb-2e566a44b7d3",
-  "location" : "file:///Users/aionescu/git-adobe/AEP/lake-health/examples/data/iceberg_dataset",
+  "location" : "file://<ICEBERG_TABLE_PATH>",
   "last-sequence-number" : 1,
   "last-updated-ms" : 1762794091847,
   "last-column-id" : 3,
@@ -69,7 +69,7 @@
       "engine-name" : "spark",
       "iceberg-version" : "Apache Iceberg 1.7.2 (commit c4e11060db443b0f3e5b70d25e7784f5a8991ad2)"
     },
-    "manifest-list" : "file:/Users/aionescu/git-adobe/AEP/lake-health/examples/data/iceberg_dataset/metadata/snap-5084338871067700571-1-9ffeafc0-4d46-4dc4-9839-9bed6e0872f5.avro",
+    "manifest-list" : "file:<ICEBERG_TABLE_PATH>/metadata/snap-5084338871067700571-1-9ffeafc0-4d46-4dc4-9839-9bed6e0872f5.avro",
     "schema-id" : 0
   } ],
   "statistics" : [ ],
@@ -80,6 +80,6 @@
   } ],
   "metadata-log" : [ {
     "timestamp-ms" : 1762794084031,
-    "metadata-file" : "file:/Users/aionescu/git-adobe/AEP/lake-health/examples/data/iceberg_dataset/metadata/v1.metadata.json"
+    "metadata-file" : "file:<ICEBERG_TABLE_PATH>/metadata/v1.metadata.json"
   } ]
 }
