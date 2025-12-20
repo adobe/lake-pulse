@@ -22,3 +22,22 @@ For example, to run the `local_store.rs` example, you can run:
 ```bash
 cargo run --example local_store
 ```
+
+## Feature-Gated Examples
+
+Some examples require specific feature flags to be enabled:
+
+| Example | Required Feature |
+|---------|------------------|
+| `local_store_hudi` | `hudi` |
+| `local_store_lance` | `lance` |
+
+To run these examples, use the `--features` flag:
+
+```bash
+cargo run --features hudi --example local_store_hudi
+cargo run --features lance --example local_store_lance
+
+# Or use the experimental feature to enable both:
+cargo run --features experimental --example local_store_hudi
+```

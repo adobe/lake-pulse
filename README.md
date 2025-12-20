@@ -76,8 +76,36 @@ async fn main() {
 
 - **Delta Lake** - Full support for transaction logs, deletion vectors, and Delta-specific metrics
 - **Apache Iceberg** - Metadata analysis, snapshot management, and Iceberg-specific features
-- **Apache Hudi** - Basic support for Hudi table structure analysis and metrics
-- **Lance** - Modern columnar format with vector search capabilities
+- **Apache Hudi** - Basic support for Hudi table structure analysis and metrics *(requires `hudi` feature)*
+- **Lance** - Modern columnar format with vector search capabilities *(requires `lance` feature)*
+
+## Feature Flags
+
+By default, Lake Pulse includes support for **Delta Lake** and **Apache Iceberg**. Additional table formats can be enabled via feature flags:
+
+| Feature | Description |
+|---------|-------------|
+| `hudi` | Enables Apache Hudi support |
+| `lance` | Enables Lance support |
+| `experimental` | Enables both `hudi` and `lance` |
+
+### Usage
+
+```toml
+# In your Cargo.toml
+
+# Default (Delta + Iceberg only)
+lake-pulse = "0.1"
+
+# With Hudi support
+lake-pulse = { version = "0.1", features = ["hudi"] }
+
+# With Lance support
+lake-pulse = { version = "0.1", features = ["lance"] }
+
+# With all experimental formats (Hudi + Lance)
+lake-pulse = { version = "0.1", features = ["experimental"] }
+```
 
 ## Storage Configuration
 
@@ -123,12 +151,16 @@ See the [`examples/`](examples/) directory for more detailed usage examples:
 - `adl_store.rs` - Azure Data Lake example
 - `local_store.rs` - Local filesystem example
 - `local_store_iceberg.rs` - Iceberg table example
-- `local_store_hudi.rs` - Hudi table example
-- `local_store_lance.rs` - Lance table example
+- `local_store_hudi.rs` - Hudi table example *(requires `hudi` feature)*
+- `local_store_lance.rs` - Lance table example *(requires `lance` feature)*
 
 Run examples with:
 ```bash
 cargo run --example s3_store
+
+# For examples requiring feature flags:
+cargo run --features hudi --example local_store_hudi
+cargo run --features lance --example local_store_lance
 ```
 
 ## Documentation

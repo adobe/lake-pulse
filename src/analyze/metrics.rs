@@ -12,6 +12,7 @@
 // each license.
 
 use crate::reader::delta::metrics::DeltaMetrics;
+#[cfg(feature = "hudi")]
 use crate::reader::hudi::metrics::HudiMetrics;
 use crate::reader::iceberg::metrics::IcebergMetrics;
 use crate::util::ascii_gantt::to_ascii_gantt;
@@ -211,7 +212,8 @@ pub struct HealthMetrics {
     pub file_compaction: Option<FileCompactionMetrics>,
     /// Delta Lake specific metrics
     pub delta_table_specific_metrics: Option<DeltaMetrics>,
-    /// Apache Hudi specific metrics
+    /// Apache Hudi specific metrics (requires `hudi` feature)
+    #[cfg(feature = "hudi")]
     pub hudi_table_specific_metrics: Option<HudiMetrics>,
     /// Apache Iceberg specific metrics
     pub iceberg_table_specific_metrics: Option<IcebergMetrics>,
@@ -1332,6 +1334,7 @@ impl HealthMetrics {
             table_constraints: None,
             file_compaction: None,
             delta_table_specific_metrics: None,
+            #[cfg(feature = "hudi")]
             hudi_table_specific_metrics: None,
             iceberg_table_specific_metrics: None,
         }

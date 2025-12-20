@@ -12,14 +12,17 @@
 // each license.
 
 use crate::analyze::delta::DeltaAnalyzer;
+#[cfg(feature = "hudi")]
 use crate::analyze::hudi::HudiAnalyzer;
 use crate::analyze::iceberg::IcebergAnalyzer;
+#[cfg(feature = "lance")]
 use crate::analyze::lance::analyze::LanceAnalyzer;
 use crate::analyze::metrics::{
     FileCompactionMetrics, FileInfo, HealthMetrics, HealthReport, PartitionInfo, TimedLikeMetrics,
 };
 use crate::analyze::table_analyzer::TableAnalyzer;
 use crate::reader::delta::reader::DeltaReader;
+#[cfg(feature = "hudi")]
 use crate::reader::hudi::reader::HudiReader;
 use crate::reader::iceberg::reader::IcebergReader;
 use crate::storage::{FileMetadata, StorageConfig, StorageProvider, StorageProviderFactory};
@@ -347,6 +350,7 @@ impl Analyzer {
                 Arc::clone(&self.storage_provider),
                 self.parallelism,
             )),
+            #[cfg(feature = "hudi")]
             "hudi" => Arc::new(HudiAnalyzer::new(
                 Arc::clone(&self.storage_provider),
                 self.parallelism,
@@ -355,12 +359,18 @@ impl Analyzer {
                 Arc::clone(&self.storage_provider),
                 self.parallelism,
             )),
+            #[cfg(feature = "lance")]
             "lance" => Arc::new(LanceAnalyzer::new(
                 Arc::clone(&self.storage_provider),
                 self.parallelism,
             )),
             _ => {
-                return Err(format!("Unknown or unsupported table type={}", table_type).into());
+                return Err(format!(
+                    "Unknown, unsupported or not enabled table type={}. \
+                    Check documentation on what other table formats you can enable.",
+                    table_type
+                )
+                .into());
             }
         };
 
@@ -606,7 +616,10 @@ impl Analyzer {
                 Some(|_| "Opened Iceberg reader".to_string()),
             )
             .await?;
-        } else if table_type == "hudi" {
+        }
+
+        #[cfg(feature = "hudi")]
+        if table_type == "hudi" {
             measure_dur_async(
                 "hudi_reader",
                 &mut internal_metrics,
@@ -1762,7 +1775,7 @@ mod tests {
         let err = result.unwrap_err();
         assert!(err
             .to_string()
-            .contains("Unknown or unsupported table type"));
+            .contains("Unknown, unsupported or not enabled table type"));
     }
 
     // Test Analyzer::analyze() with Delta table files

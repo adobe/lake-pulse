@@ -25,6 +25,8 @@
 //! - [`lance`] - Lance format reader
 
 pub mod delta;
+#[cfg(feature = "hudi")]
 pub mod hudi;
 pub mod iceberg;
+#[cfg(feature = "lance")]
 pub mod lance;

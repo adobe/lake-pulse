@@ -73,8 +73,20 @@ jobs:
         run: cargo clippy --all-targets --all-features --workspace -- -D warnings
 
   test:
-    name: Test
+    name: Test (${{ matrix.name }})
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: "default (Delta + Iceberg)"
+            features: ""
+          - name: "hudi"
+            features: "--features hudi"
+          - name: "lance"
+            features: "--features lance"
+          - name: "experimental (hudi + lance)"
+            features: "--features experimental"
     steps:
       - uses: actions/checkout@v6
 
@@ -87,24 +99,38 @@ jobs:
         uses: actions-rust-lang/setup-rust-toolchain@v1
 
       - name: Build
-        run: cargo build --all-features --workspace
+        run: cargo build ${{ matrix.features }} --workspace
 
       - name: Run tests
-        run: cargo test --all-features --workspace
+        run: cargo test ${{ matrix.features }} --workspace
         env:
           RUST_LOG: DEBUG
           RUST_BACKTRACE: full
 
+  test-examples:
+    name: Test Examples
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Install protobuf compiler
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y protobuf-compiler
+
+      - name: Setup Rust toolchain
+        uses: actions-rust-lang/setup-rust-toolchain@v1
+
       - name: Run examples
         run: |
           echo "Running local store examples..."
-          cargo run --example local_store
-          cargo run --example local_store_custom
-          cargo run --example local_store_hudi
-          cargo run --example local_store_iceberg
-          cargo run --example local_store_json
-          cargo run --example local_store_lance
-          cargo run --example local_store_synthetic_deletion_vectors
+          cargo run --features experimental --example local_store
+          cargo run --features experimental --example local_store_custom
+          cargo run --features experimental --example local_store_hudi
+          cargo run --features experimental --example local_store_iceberg
+          cargo run --features experimental --example local_store_json
+          cargo run --features experimental --example local_store_lance
+          cargo run --features experimental --example local_store_synthetic_deletion_vectors
 
   test-platforms:
     name: Test on ${{ matrix.os }}
@@ -178,6 +204,7 @@ jobs:
     needs:
       - check
       - test
+      - test-examples
       - test-platforms
       - coverage
     steps:
@@ -186,6 +213,7 @@ jobs:
           if [[ ! ( \
                  "${{ needs.check.result }}" == "success" \
               && "${{ needs.test.result }}" == "success" \
+              && "${{ needs.test-examples.result }}" == "success" \
               && "${{ needs.test-platforms.result }}" == "success" \
               && "${{ needs.coverage.result }}" == "success" \
               ) ]]; then
