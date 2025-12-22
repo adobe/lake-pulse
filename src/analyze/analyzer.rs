@@ -11,6 +11,10 @@
 // specific language governing permissions and limitations under
 // each license.
 
+use crate::analyze::common::{
+    AVG_FILE_SIZE_MEDIUM_THRESHOLD, COMPACTION_TARGET_LARGE_AVG, COMPACTION_TARGET_MEDIUM_AVG,
+    COMPACTION_TARGET_SMALL_AVG, SMALL_FILE_THRESHOLD_BYTES, TARGET_COMPACTION_SIZE_BYTES,
+};
 use crate::analyze::delta::DeltaAnalyzer;
 #[cfg(feature = "hudi")]
 use crate::analyze::hudi::HudiAnalyzer;
@@ -808,8 +812,7 @@ impl Analyzer {
         // Analyze file sizes for compaction opportunities
         for file in data_files {
             let file_size = file.size;
-            if file_size < 16 * 1024 * 1024 {
-                // < 16MB
+            if file_size < SMALL_FILE_THRESHOLD_BYTES {
                 small_files_count += 1;
                 small_files_size += file_size;
                 potential_compaction_files += 1;
@@ -818,12 +821,11 @@ impl Analyzer {
 
         // Calculate potential savings
         if small_files_count > 1 {
-            let target_size = 128 * 1024 * 1024; // 128MB target
-            let files_per_target = (target_size as f64
+            let files_per_target = (TARGET_COMPACTION_SIZE_BYTES as f64
                 / (small_files_size as f64 / small_files_count as f64))
                 .ceil() as usize;
             let target_files = (small_files_count as f64 / files_per_target as f64).ceil() as usize;
-            let estimated_target_size = target_files as u64 * target_size / 2; // Conservative estimate
+            let estimated_target_size = target_files as u64 * TARGET_COMPACTION_SIZE_BYTES / 2; // Conservative estimate
             estimated_savings = small_files_size.saturating_sub(estimated_target_size);
         }
 
@@ -877,19 +879,19 @@ impl Analyzer {
 
     fn calculate_recommended_target_size(&self, data_files: &[FileMetadata]) -> u64 {
         if data_files.is_empty() {
-            return 128 * 1024 * 1024; // 128MB default
+            return COMPACTION_TARGET_SMALL_AVG;
         }
 
         let total_size = data_files.iter().map(|f| f.size).sum::<u64>();
         let avg_size = total_size as f64 / data_files.len() as f64;
 
         // Recommend target size based on current average
-        if avg_size < 16.0 * 1024.0 * 1024.0 {
-            128 * 1024 * 1024 // 128MB for small files
-        } else if avg_size < 64.0 * 1024.0 * 1024.0 {
-            256 * 1024 * 1024 // 256MB for medium files
+        if avg_size < SMALL_FILE_THRESHOLD_BYTES as f64 {
+            COMPACTION_TARGET_SMALL_AVG
+        } else if avg_size < AVG_FILE_SIZE_MEDIUM_THRESHOLD {
+            COMPACTION_TARGET_MEDIUM_AVG
         } else {
-            512 * 1024 * 1024 // 512MB for large files
+            COMPACTION_TARGET_LARGE_AVG
         }
     }
 

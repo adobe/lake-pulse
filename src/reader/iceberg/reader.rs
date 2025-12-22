@@ -117,10 +117,9 @@ impl IcebergReader {
     /// but the standard file URI format uses file:// (e.g., file:///home/user/path).
     /// This method converts from the standard format to iceberg-rust's expected format.
     fn normalize_file_path(path: &str) -> String {
-        if path.starts_with("file://") {
-            // Convert file:///path to file:/path
-            // file:// is followed by the path, so we need to strip one slash
-            let without_scheme = path.strip_prefix("file://").unwrap();
+        // Convert file:///path to file:/path
+        // file:// is followed by the path, so we need to strip one slash
+        if let Some(without_scheme) = path.strip_prefix("file://") {
             format!("file:/{}", without_scheme)
         } else {
             path.to_string()
@@ -476,7 +475,7 @@ impl IcebergReader {
     ) -> Result<FileStatistics, Box<dyn Error + Send + Sync>> {
         info!("Extracting file statistics");
 
-        if current_snapshot.is_none() {
+        let Some(snapshot) = current_snapshot else {
             warn!("No current snapshot found");
             return Ok(FileStatistics {
                 num_data_files: 0,
@@ -490,9 +489,7 @@ impl IcebergReader {
                 num_position_delete_files: 0,
                 num_equality_delete_files: 0,
             });
-        }
-
-        let snapshot = current_snapshot.unwrap();
+        };
 
         // Get summary from snapshot which contains aggregated statistics
         let summary = snapshot.summary();
@@ -581,7 +578,7 @@ impl IcebergReader {
     ) -> Result<ManifestStatistics, Box<dyn Error + Send + Sync>> {
         info!("Extracting manifest statistics");
 
-        if current_snapshot.is_none() {
+        let Some(snapshot) = current_snapshot else {
             warn!("No current snapshot found");
             return Ok(ManifestStatistics {
                 num_manifest_files: 0,
@@ -592,9 +589,7 @@ impl IcebergReader {
                 num_manifest_lists: 0,
                 total_manifest_list_size_bytes: 0,
             });
-        }
-
-        let snapshot = current_snapshot.unwrap();
+        };
 
         // Get manifest list location from snapshot
         let manifest_list_path = snapshot.manifest_list();

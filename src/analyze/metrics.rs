@@ -663,14 +663,11 @@ impl Display for HealthReport {
 
         // Clustering (Iceberg) and Deletion Vectors (Delta) - side by side
         // Only show clustering if there are actual clustering columns defined
-        let has_clustering = report.metrics.clustering.is_some()
-            && !report
-                .metrics
-                .clustering
-                .as_ref()
-                .unwrap()
-                .clustering_columns
-                .is_empty();
+        let has_clustering = report
+            .metrics
+            .clustering
+            .as_ref()
+            .is_some_and(|c| !c.clustering_columns.is_empty());
         let has_deletion_vectors = report.metrics.deletion_vector_metrics.is_some();
 
         if has_clustering || has_deletion_vectors {
@@ -1148,13 +1145,14 @@ impl Display for HealthReport {
                 format!("{:?}", delta_metrics.metadata.partition_columns)
             )?;
             if let Some(created_time) = delta_metrics.metadata.created_time {
-                let created_datetime = DateTime::from_timestamp(created_time / 1000, 0).unwrap();
-                writeln!(
-                    f,
-                    " {:<40} {:>32}",
-                    "Created Time",
-                    created_datetime.to_rfc3339()
-                )?;
+                if let Some(created_datetime) = DateTime::from_timestamp(created_time / 1000, 0) {
+                    writeln!(
+                        f,
+                        " {:<40} {:>32}",
+                        "Created Time",
+                        created_datetime.to_rfc3339()
+                    )?;
+                }
             }
             let tbl_props = delta_metrics.table_properties.clone();
             if !tbl_props.is_empty() {

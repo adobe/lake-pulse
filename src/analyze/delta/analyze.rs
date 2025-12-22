@@ -11,6 +11,10 @@
 // specific language governing permissions and limitations under
 // each license.
 
+use crate::analyze::common::{
+    calculate_recommended_retention, calculate_retention_efficiency,
+    calculate_schema_stability_score, is_breaking_change, SchemaChange,
+};
 use crate::analyze::metrics::{
     ClusteringInfo, DeletionVectorMetrics, FileCompactionMetrics, HealthMetrics,
     SchemaEvolutionMetrics, TableConstraintsMetrics, TimeTravelMetrics,
@@ -26,32 +30,10 @@ use parquet::file::reader::{FileReader, SerializedFileReader};
 use parquet::record::Field;
 use parquet::schema::types::Type;
 use serde_json::Value;
-use std::collections::HashSet;
 use std::error::Error;
 use std::sync::Arc;
 use std::time::SystemTime;
 use tracing::info;
-
-/// Represents a schema change event in a Delta table's history.
-///
-/// This structure captures information about schema modifications, including
-/// the version, timestamp, the actual schema definition, and whether the change
-/// is backward-compatible or breaking.
-///
-/// # Fields
-///
-/// * `version` - The Delta table version when this schema change occurred
-/// * `timestamp` - Unix timestamp (in milliseconds) when the change was made
-/// * `schema` - The complete schema definition as a JSON value
-/// * `is_breaking` - Whether this change breaks backward compatibility (e.g., column removal, type changes)
-#[derive(Debug, Clone)]
-pub struct SchemaChange {
-    #[allow(dead_code)]
-    pub version: u64,
-    pub timestamp: u64,
-    pub schema: Value,
-    pub is_breaking: bool,
-}
 
 /// Intermediate structure to hold aggregated results from parallel metadata processing.
 ///
@@ -616,14 +598,11 @@ impl DeltaAnalyzer {
                     result.unique_constraints += constraints.3;
                     result.foreign_key_constraints += constraints.4;
 
-                    let is_breaking = self.is_breaking_change(&result.schema_changes, &schema);
+                    let breaking = is_breaking_change(&result.schema_changes, &schema);
 
-                    result.schema_changes.push(SchemaChange {
-                        version,
-                        timestamp,
-                        schema,
-                        is_breaking,
-                    });
+                    result
+                        .schema_changes
+                        .push(SchemaChange::new(version, timestamp, schema, breaking));
                 }
             }
         }
@@ -755,13 +734,13 @@ impl DeltaAnalyzer {
                     result.unique_constraints += constraints.3;
                     result.foreign_key_constraints += constraints.4;
 
-                    let is_breaking = self.is_breaking_change(&result.schema_changes, &schema);
-                    result.schema_changes.push(SchemaChange {
-                        version: current_version,
-                        timestamp: entry.get("timestamp").and_then(|t| t.as_u64()).unwrap_or(0),
+                    let breaking = is_breaking_change(&result.schema_changes, &schema);
+                    result.schema_changes.push(SchemaChange::new(
+                        current_version,
+                        entry.get("timestamp").and_then(|t| t.as_u64()).unwrap_or(0),
                         schema,
-                        is_breaking,
-                    });
+                        breaking,
+                    ));
                 }
             }
         }
@@ -975,18 +954,15 @@ impl DeltaAnalyzer {
             let newest_age_days = (now - newest_timestamp / 1000) as f64 / 86400.0;
             let avg_snapshot_size = total_historical_size as f64 / total_snapshots as f64;
 
-            let storage_cost_impact = self.calculate_storage_cost_impact(
+            let storage_cost_impact = crate::analyze::common::calculate_storage_cost_impact(
                 total_historical_size,
                 total_snapshots,
                 oldest_age_days,
             );
-            let retention_efficiency = self.calculate_retention_efficiency(
-                total_snapshots,
-                oldest_age_days,
-                newest_age_days,
-            );
+            let retention_efficiency =
+                calculate_retention_efficiency(total_snapshots, oldest_age_days, newest_age_days);
             let recommended_retention =
-                self.calculate_recommended_retention(total_snapshots, oldest_age_days);
+                calculate_recommended_retention(total_snapshots, oldest_age_days);
 
             metrics.time_travel_metrics = Some(TimeTravelMetrics {
                 total_snapshots,
@@ -1151,18 +1127,19 @@ impl DeltaAnalyzer {
         };
 
         // Calculate change frequency (changes per day)
-        let total_days = if changes.len() > 1 {
-            let first_change = changes.first().unwrap().timestamp / 1000;
-            let last_change = changes.last().unwrap().timestamp / 1000;
-            ((last_change - first_change) as f64 / 86400.0).max(1.0_f64)
-        } else {
-            1.0
+        let total_days = match (changes.first(), changes.last()) {
+            (Some(first), Some(last)) if changes.len() > 1 => {
+                let first_change = first.timestamp / 1000;
+                let last_change = last.timestamp / 1000;
+                ((last_change - first_change) as f64 / 86400.0).max(1.0_f64)
+            }
+            _ => 1.0,
         };
 
         let change_frequency = total_changes as f64 / total_days;
 
-        // Calculate stability score
-        let stability_score = self.calculate_schema_stability_score(
+        // Calculate stability score using shared function
+        let stability_score = calculate_schema_stability_score(
             total_changes,
             breaking_changes,
             change_frequency,
@@ -1179,187 +1156,6 @@ impl DeltaAnalyzer {
             current_schema_version: current_version,
         }))
     }
-
-    /// Check if a schema change is breaking.
-    ///
-    /// Compares a new schema against the most recent previous schema to determine
-    /// if the change breaks backward compatibility.
-    ///
-    /// # Arguments
-    ///
-    /// * `previous_changes` - The previous schema changes
-    /// * `new_schema` - The new schema
-    ///
-    /// # Returns
-    ///
-    /// `true` if the schema change is breaking (e.g., column removal, type change),
-    /// `false` if it's backward-compatible or if there are no previous changes.
-    fn is_breaking_change(&self, previous_changes: &[SchemaChange], new_schema: &Value) -> bool {
-        if previous_changes.is_empty() {
-            return false;
-        }
-
-        // TODO: Get rid of `unwrap` here -----------------v
-        let last_schema = &previous_changes.last().unwrap().schema;
-
-        // Check for breaking changes:
-        // 1. Column removal
-        // 2. Column type changes
-        // 3. Required field changes
-        self.detect_breaking_schema_changes(last_schema, new_schema)
-    }
-
-    /// Detect breaking schema changes between two schemas.
-    ///
-    /// Performs detailed comparison of schema fields to identify breaking changes:
-    /// - Column removal (fields present in old schema but missing in new)
-    /// - Type changes (field type modified)
-    /// - Nullability changes (non-nullable field becoming nullable)
-    ///
-    /// # Arguments
-    ///
-    /// * `old_schema` - The old schema
-    /// * `new_schema` - The new schema
-    ///
-    /// # Returns
-    ///
-    /// `true` if any breaking changes are detected, `false` otherwise.
-    fn detect_breaking_schema_changes(&self, old_schema: &Value, new_schema: &Value) -> bool {
-        // Simplified breaking change detection
-        // In a real implementation, this would be more sophisticated
-        if let (Some(old_fields), Some(new_fields)) =
-            (old_schema.get("fields"), new_schema.get("fields"))
-        {
-            if let (Some(old_fields_array), Some(new_fields_array)) =
-                (old_fields.as_array(), new_fields.as_array())
-            {
-                // Check if any fields were removed
-                let old_field_names: HashSet<String> = old_fields_array
-                    .iter()
-                    .filter_map(|f| {
-                        f.get("name")
-                            .and_then(|n| n.as_str())
-                            .map(|s| s.to_string())
-                    })
-                    .collect();
-                let new_field_names: HashSet<String> = new_fields_array
-                    .iter()
-                    .filter_map(|f| {
-                        f.get("name")
-                            .and_then(|n| n.as_str())
-                            .map(|s| s.to_string())
-                    })
-                    .collect();
-
-                // If any old fields are missing, it's a breaking change
-                if !old_field_names.is_subset(&new_field_names) {
-                    return true;
-                }
-
-                // Check for type changes in existing fields
-                for old_field in old_fields_array {
-                    if let Some(field_name) = old_field.get("name").and_then(|n| n.as_str()) {
-                        if let Some(new_field) = new_fields_array
-                            .iter()
-                            .find(|f| f.get("name").and_then(|n| n.as_str()) == Some(field_name))
-                        {
-                            let old_type = old_field.get("type").and_then(|t| t.as_str());
-                            let new_type = new_field.get("type").and_then(|t| t.as_str());
-
-                            // If types changed, it's a breaking change
-                            if old_type != new_type {
-                                return true;
-                            }
-
-                            // Check if nullable changed from false to true (breaking)
-                            let old_nullable = old_field
-                                .get("nullable")
-                                .and_then(|n| n.as_bool())
-                                .unwrap_or(true);
-                            let new_nullable = new_field
-                                .get("nullable")
-                                .and_then(|n| n.as_bool())
-                                .unwrap_or(true);
-
-                            if !old_nullable && new_nullable {
-                                return true;
-                            }
-                        }
-                    }
-                }
-            }
-        }
-
-        false
-    }
-
-    /// Calculate schema stability score.
-    ///
-    /// Computes a stability score (0.0 to 1.0) based on schema change patterns.
-    /// Penalizes frequent changes, breaking changes, and high change frequency.
-    /// Rewards stability (no recent changes).
-    ///
-    /// # Arguments
-    ///
-    /// * `total_changes` - Total number of schema changes
-    /// * `breaking_changes` - Number of breaking schema changes
-    /// * `frequency` - Frequency of schema changes (changes per day)
-    /// * `days_since_last` - Days since last schema change
-    ///
-    /// # Returns
-    ///
-    /// A score between 0.0 and 1.0, where:
-    /// * 1.0 = highly stable schema
-    /// * 0.0 = unstable schema with frequent breaking changes
-    fn calculate_schema_stability_score(
-        &self,
-        total_changes: usize,
-        breaking_changes: usize,
-        frequency: f64,
-        days_since_last: f64,
-    ) -> f64 {
-        let mut score: f64 = 1.0;
-
-        // Penalize total changes
-        if total_changes > 50 {
-            score -= 0.3;
-        } else if total_changes > 20 {
-            score -= 0.2;
-        } else if total_changes > 10 {
-            score -= 0.1;
-        }
-
-        // Penalize breaking changes heavily
-        if breaking_changes > 10 {
-            score -= 0.4;
-        } else if breaking_changes > 5 {
-            score -= 0.3;
-        } else if breaking_changes > 0 {
-            score -= 0.2;
-        }
-
-        // Penalize high frequency changes
-        if frequency > 1.0 {
-            // More than 1 change per day
-            score -= 0.3;
-        } else if frequency > 0.5 {
-            // More than 1 change every 2 days
-            score -= 0.2;
-        } else if frequency > 0.1 {
-            // More than 1 change every 10 days
-            score -= 0.1;
-        }
-
-        // Reward stability (no recent changes)
-        if days_since_last > 30.0 {
-            score += 0.1;
-        } else if days_since_last > 7.0 {
-            score += 0.05;
-        }
-
-        score.clamp(0.0_f64, 1.0_f64)
-    }
-
     /// Estimate snapshot size from a Delta log entry.
     ///
     /// Estimates the size of a snapshot by summing file sizes from "add" actions
@@ -1389,139 +1185,6 @@ impl DeltaAnalyzer {
 
         // Add metadata overhead (estimated)
         size + 1024 // 1KB overhead per snapshot
-    }
-
-    /// Calculate storage cost impact.
-    ///
-    /// Computes a score indicating the storage cost impact of historical snapshots.
-    /// Considers total size, snapshot count, and age of oldest snapshot.
-    ///
-    /// # Arguments
-    ///
-    /// * `total_size` - Total size of all snapshots in bytes
-    /// * `snapshot_count` - Total number of snapshots
-    /// * `oldest_age` - Age of the oldest snapshot in days
-    ///
-    /// # Returns
-    ///
-    /// A score between 0.0 and 1.0, where:
-    /// * 0.0 = minimal storage cost impact
-    /// * 1.0 = high storage cost, cleanup recommended
-    fn calculate_storage_cost_impact(
-        &self,
-        total_size: u64,
-        snapshot_count: usize,
-        oldest_age: f64,
-    ) -> f64 {
-        let mut impact: f64 = 0.0;
-
-        // Impact from total size
-        let size_gb = total_size as f64 / (1024.0 * 1024.0 * 1024.0);
-        if size_gb > 100.0 {
-            impact += 0.4;
-        } else if size_gb > 50.0 {
-            impact += 0.3;
-        } else if size_gb > 10.0 {
-            impact += 0.2;
-        } else if size_gb > 1.0 {
-            impact += 0.1;
-        }
-
-        // Impact from snapshot count
-        if snapshot_count > 1000 {
-            impact += 0.3;
-        } else if snapshot_count > 500 {
-            impact += 0.2;
-        } else if snapshot_count > 100 {
-            impact += 0.1;
-        }
-
-        // Impact from age (older snapshots = higher cost)
-        if oldest_age > 365.0 {
-            impact += 0.3;
-        } else if oldest_age > 90.0 {
-            impact += 0.2;
-        } else if oldest_age > 30.0 {
-            impact += 0.1;
-        }
-
-        impact.min(1.0_f64)
-    }
-
-    /// Calculate retention efficiency.
-    ///
-    /// Evaluates how efficiently the table's retention policy is configured.
-    /// Penalizes excessive snapshot counts and inappropriate retention periods.
-    ///
-    /// # Arguments
-    ///
-    /// * `snapshot_count` - Total number of snapshots
-    /// * `oldest_age` - Age of the oldest snapshot in days
-    /// * `newest_age` - Age of the newest snapshot in days
-    ///
-    /// # Returns
-    ///
-    /// A score between 0.0 and 1.0, where:
-    /// * 1.0 = optimal retention efficiency
-    /// * 0.0 = poor retention efficiency (too many snapshots or inappropriate retention period)
-    fn calculate_retention_efficiency(
-        &self,
-        snapshot_count: usize,
-        oldest_age: f64,
-        newest_age: f64,
-    ) -> f64 {
-        let mut efficiency: f64 = 1.0;
-
-        // Penalize too many snapshots
-        if snapshot_count > 1000 {
-            efficiency -= 0.4;
-        } else if snapshot_count > 500 {
-            efficiency -= 0.3;
-        } else if snapshot_count > 100 {
-            efficiency -= 0.2;
-        } else if snapshot_count > 50 {
-            efficiency -= 0.1;
-        }
-
-        // Reward appropriate retention period
-        let retention_days = oldest_age - newest_age;
-        if retention_days > 365.0 {
-            efficiency -= 0.2; // Too long retention
-        } else if retention_days < 7.0 {
-            efficiency -= 0.1; // Too short retention
-        }
-
-        efficiency.clamp(0.0_f64, 1.0_f64)
-    }
-
-    /// Calculate recommended retention period.
-    ///
-    /// Provides a retention period recommendation based on snapshot count and age.
-    /// Uses heuristics to balance time travel capabilities with storage costs.
-    ///
-    /// # Arguments
-    ///
-    /// * `snapshot_count` - Total number of snapshots
-    /// * `oldest_age` - Age of the oldest snapshot in days
-    ///
-    /// # Returns
-    ///
-    /// Recommended retention period in days:
-    /// * 30 days for high snapshot count (>1000) or very old data (>365 days)
-    /// * 60 days for medium snapshot count (>500) or old data (>90 days)
-    /// * 90 days for moderate snapshot count (>100) or recent data (>30 days)
-    /// * 180 days for low snapshot count and recent data
-    fn calculate_recommended_retention(&self, snapshot_count: usize, oldest_age: f64) -> u64 {
-        // Simple heuristic: recommend retention based on snapshot count and age
-        if snapshot_count > 1000 || oldest_age > 365.0 {
-            30 // 30 days for high snapshot count or very old data
-        } else if snapshot_count > 500 || oldest_age > 90.0 {
-            60 // 60 days for medium snapshot count or old data
-        } else if snapshot_count > 100 || oldest_age > 30.0 {
-            90 // 90 days for moderate snapshot count or recent data
-        } else {
-            180 // 180 days for low snapshot count and recent data
-        }
     }
 
     /// Extract constraints from Delta schema.
@@ -1731,6 +1394,7 @@ impl TableAnalyzer for DeltaAnalyzer {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::analyze::common::detect_breaking_schema_changes;
     use crate::storage::error::StorageResult;
     use serde_json::json;
     use std::collections::HashMap;
@@ -1994,9 +1658,8 @@ mod tests {
 
     #[test]
     fn test_calculate_schema_stability_score_perfect() {
-        let analyzer = create_test_analyzer();
         // No changes, no breaking changes, no frequency, long time since last
-        let score = analyzer.calculate_schema_stability_score(0, 0, 0.0, 365.0);
+        let score = calculate_schema_stability_score(0, 0, 0.0, 365.0);
 
         assert!(score >= 0.9); // Should be very stable
         assert!(score <= 1.0);
@@ -2004,9 +1667,8 @@ mod tests {
 
     #[test]
     fn test_calculate_schema_stability_score_unstable() {
-        let analyzer = create_test_analyzer();
         // Many changes, many breaking, high frequency, recent
-        let score = analyzer.calculate_schema_stability_score(100, 50, 2.0, 1.0);
+        let score = calculate_schema_stability_score(100, 50, 2.0, 1.0);
 
         assert!(score >= 0.0);
         assert!(score < 0.5); // Should be unstable
@@ -2014,9 +1676,8 @@ mod tests {
 
     #[test]
     fn test_calculate_schema_stability_score_moderate() {
-        let analyzer = create_test_analyzer();
         // Moderate changes, few breaking, low frequency, moderate time
-        let score = analyzer.calculate_schema_stability_score(15, 2, 0.05, 10.0);
+        let score = calculate_schema_stability_score(15, 2, 0.05, 10.0);
 
         assert!((0.0..=1.0).contains(&score));
         assert!(score > 0.3 && score < 0.9); // Should be moderate
@@ -2024,9 +1685,8 @@ mod tests {
 
     #[test]
     fn test_calculate_schema_stability_score_clamped() {
-        let analyzer = create_test_analyzer();
         // Extreme values should be clamped
-        let score = analyzer.calculate_schema_stability_score(1000, 500, 10.0, 0.1);
+        let score = calculate_schema_stability_score(1000, 500, 10.0, 0.1);
 
         assert!((0.0..=1.0).contains(&score));
     }
@@ -2162,7 +1822,6 @@ mod tests {
 
     #[test]
     fn test_detect_breaking_schema_changes_no_change() {
-        let analyzer = create_test_analyzer();
         let old_schema = json!({
             "type": "struct",
             "fields": [
@@ -2171,14 +1830,13 @@ mod tests {
         });
         let new_schema = old_schema.clone();
 
-        let is_breaking = analyzer.detect_breaking_schema_changes(&old_schema, &new_schema);
+        let breaking = detect_breaking_schema_changes(&old_schema, &new_schema);
 
-        assert!(!is_breaking);
+        assert!(!breaking);
     }
 
     #[test]
     fn test_detect_breaking_schema_changes_field_added() {
-        let analyzer = create_test_analyzer();
         let old_schema = json!({
             "type": "struct",
             "fields": [
@@ -2193,15 +1851,14 @@ mod tests {
             ]
         });
 
-        let is_breaking = analyzer.detect_breaking_schema_changes(&old_schema, &new_schema);
+        let breaking = detect_breaking_schema_changes(&old_schema, &new_schema);
 
         // Adding a field is not breaking
-        assert!(!is_breaking);
+        assert!(!breaking);
     }
 
     #[test]
     fn test_detect_breaking_schema_changes_field_removed() {
-        let analyzer = create_test_analyzer();
         let old_schema = json!({
             "type": "struct",
             "fields": [
@@ -2216,15 +1873,14 @@ mod tests {
             ]
         });
 
-        let is_breaking = analyzer.detect_breaking_schema_changes(&old_schema, &new_schema);
+        let breaking = detect_breaking_schema_changes(&old_schema, &new_schema);
 
         // Removing a field is breaking
-        assert!(is_breaking);
+        assert!(breaking);
     }
 
     #[test]
     fn test_detect_breaking_schema_changes_type_changed() {
-        let analyzer = create_test_analyzer();
         let old_schema = json!({
             "type": "struct",
             "fields": [
@@ -2238,15 +1894,14 @@ mod tests {
             ]
         });
 
-        let is_breaking = analyzer.detect_breaking_schema_changes(&old_schema, &new_schema);
+        let breaking = detect_breaking_schema_changes(&old_schema, &new_schema);
 
         // Changing type is breaking
-        assert!(is_breaking);
+        assert!(breaking);
     }
 
     #[test]
     fn test_detect_breaking_schema_changes_nullable_changed() {
-        let analyzer = create_test_analyzer();
         let old_schema = json!({
             "type": "struct",
             "fields": [
@@ -2260,42 +1915,40 @@ mod tests {
             ]
         });
 
-        let is_breaking = analyzer.detect_breaking_schema_changes(&old_schema, &new_schema);
+        let breaking = detect_breaking_schema_changes(&old_schema, &new_schema);
 
         // Changing from non-nullable to nullable is breaking
-        assert!(is_breaking);
+        assert!(breaking);
     }
 
     #[test]
     fn test_is_breaking_change_no_previous() {
-        let analyzer = create_test_analyzer();
         let previous_changes: Vec<SchemaChange> = vec![];
         let new_schema = json!({
             "type": "struct",
             "fields": [{"name": "id", "type": "integer"}]
         });
 
-        let is_breaking = analyzer.is_breaking_change(&previous_changes, &new_schema);
+        let breaking = is_breaking_change(&previous_changes, &new_schema);
 
         // First schema is never breaking
-        assert!(!is_breaking);
+        assert!(!breaking);
     }
 
     #[test]
     fn test_is_breaking_change_with_previous() {
-        let analyzer = create_test_analyzer();
-        let previous_changes = vec![SchemaChange {
-            version: 0,
-            timestamp: 1000000,
-            schema: json!({
+        let previous_changes = vec![SchemaChange::new(
+            0,
+            1000000,
+            json!({
                 "type": "struct",
                 "fields": [
                     {"name": "id", "type": "integer"},
                     {"name": "name", "type": "string"}
                 ]
             }),
-            is_breaking: false,
-        }];
+            false,
+        )];
         let new_schema = json!({
             "type": "struct",
             "fields": [
@@ -2303,10 +1956,10 @@ mod tests {
             ]
         });
 
-        let is_breaking = analyzer.is_breaking_change(&previous_changes, &new_schema);
+        let breaking = is_breaking_change(&previous_changes, &new_schema);
 
         // Removing "name" field is breaking
-        assert!(is_breaking);
+        assert!(breaking);
     }
 
     #[test]
@@ -2446,17 +2099,15 @@ mod tests {
 
     #[test]
     fn test_calculate_storage_cost_impact_zero() {
-        let analyzer = create_test_analyzer();
-        let impact = analyzer.calculate_storage_cost_impact(0, 0, 0.0);
+        let impact = crate::analyze::common::calculate_storage_cost_impact(0, 0, 0.0);
 
         assert!((0.0..=1.0).contains(&impact));
     }
 
     #[test]
     fn test_calculate_storage_cost_impact_low() {
-        let analyzer = create_test_analyzer();
         // Small size, few snapshots, recent
-        let impact = analyzer.calculate_storage_cost_impact(1_000_000, 5, 1.0);
+        let impact = crate::analyze::common::calculate_storage_cost_impact(1_000_000, 5, 1.0);
 
         assert!((0.0..=1.0).contains(&impact));
         assert!(impact < 0.5);
@@ -2464,9 +2115,9 @@ mod tests {
 
     #[test]
     fn test_calculate_storage_cost_impact_high() {
-        let analyzer = create_test_analyzer();
         // Large size, many snapshots, old
-        let impact = analyzer.calculate_storage_cost_impact(100_000_000_000, 1000, 365.0);
+        let impact =
+            crate::analyze::common::calculate_storage_cost_impact(100_000_000_000, 1000, 365.0);
 
         assert!((0.0..=1.0).contains(&impact));
         assert!(impact > 0.5);
@@ -2474,9 +2125,8 @@ mod tests {
 
     #[test]
     fn test_calculate_retention_efficiency_perfect() {
-        let analyzer = create_test_analyzer();
         // Few snapshots, recent data
-        let efficiency = analyzer.calculate_retention_efficiency(10, 7.0, 1.0);
+        let efficiency = calculate_retention_efficiency(10, 7.0, 1.0);
 
         assert!((0.0..=1.0).contains(&efficiency));
         assert!(efficiency > 0.7); // Should be efficient
@@ -2484,11 +2134,10 @@ mod tests {
 
     #[test]
     fn test_calculate_retention_efficiency_poor() {
-        let analyzer = create_test_analyzer();
         // Many snapshots (>1000), old data with long retention
         // 1000 snapshots: -0.3, retention 364 days (365-1): no penalty
         // Expected: 1.0 - 0.3 = 0.7
-        let efficiency = analyzer.calculate_retention_efficiency(1000, 365.0, 1.0);
+        let efficiency = calculate_retention_efficiency(1000, 365.0, 1.0);
 
         assert!((0.0..=1.0).contains(&efficiency));
         // With 1000 snapshots, efficiency is penalized by 0.3, so it's 0.7
@@ -2497,8 +2146,7 @@ mod tests {
 
     #[test]
     fn test_calculate_recommended_retention_few_snapshots() {
-        let analyzer = create_test_analyzer();
-        let retention = analyzer.calculate_recommended_retention(5, 7.0);
+        let retention = calculate_recommended_retention(5, 7.0);
 
         assert!(retention >= 7); // Should recommend at least current retention (in days)
         assert!(retention >= 90); // Low snapshot count should recommend longer retention
@@ -2506,10 +2154,9 @@ mod tests {
 
     #[test]
     fn test_calculate_recommended_retention_many_snapshots() {
-        let analyzer = create_test_analyzer();
         // With 1000 snapshots (not > 1000), it goes to second condition (> 500)
         // and with oldest_age 365.0 (> 90.0), it returns 60 days
-        let retention = analyzer.calculate_recommended_retention(1000, 365.0);
+        let retention = calculate_recommended_retention(1000, 365.0);
 
         assert!(retention > 0);
         assert_eq!(retention, 60); // 1000 snapshots and old age should recommend 60 days

@@ -181,14 +181,13 @@ impl LanceAnalyzer {
             .filter(|f| f.path.contains("/_versions/"))
             .max_by_key(|f| f.last_modified);
 
-        if version_file.is_none() {
-            warn!("No version files found in Lance metadata");
-            return Ok(Vec::new());
-        }
-
         // Extract the table base path from the version file path
         // Version files are typically at: <table_path>/_versions/<version>.manifest
-        let version_path = &version_file.unwrap().path;
+        let Some(version_file) = version_file else {
+            warn!("No version files found in Lance metadata");
+            return Ok(Vec::new());
+        };
+        let version_path = &version_file.path;
         let table_path = if let Some(pos) = version_path.find("/_versions/") {
             &version_path[..pos]
         } else {

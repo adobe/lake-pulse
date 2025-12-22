@@ -61,7 +61,8 @@ where
         }
     }
 
-    Err(last_error.unwrap())
+    // This is only reachable if the loop ran at least once and set last_error
+    Err(last_error.expect("loop must have set last_error"))
 }
 
 #[cfg(test)]

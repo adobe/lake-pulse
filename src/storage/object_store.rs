@@ -22,7 +22,6 @@ use object_store::{
     aws::AmazonS3Builder, azure::MicrosoftAzureBuilder, gcp::GoogleCloudStorageBuilder,
     local::LocalFileSystem, ClientOptions, ObjectStore, RetryConfig,
 };
-use regex::Regex;
 use std::collections::HashMap;
 use std::fmt::{Debug, Formatter};
 use std::future::Future;
@@ -844,8 +843,16 @@ impl StorageProvider for ObjectStoreProvider {
     fn uri_from_path(&self, path: &str) -> String {
         fn fix_uri(storage_type: &StorageType, path: &str) -> String {
             if storage_type == &StorageType::Local {
-                let re = Regex::new(r"^file:/+").unwrap();
-                format!("file://{}", re.replace(path, ""))
+                // Normalize file:// URIs to canonical format
+                // Handle paths like "file:///path", "file://path", "file:/path", or "/path"
+                if let Some(without_scheme) = path.strip_prefix("file:") {
+                    // Had file: prefix - strip it and any leading slashes, then add file://
+                    let normalized = without_scheme.trim_start_matches('/');
+                    format!("file://{}", normalized)
+                } else {
+                    // No file: prefix - just add file:// (preserving leading slash for absolute paths)
+                    format!("file://{}", path)
+                }
             } else {
                 path.to_string()
             }

@@ -28,5 +28,6 @@ pub mod provider;
 
 // Public exports
 pub use config::StorageConfig;
+pub use error::{StorageError, StorageResult};
 pub use factory::StorageProviderFactory;
 pub use provider::{FileMetadata, StorageProvider};

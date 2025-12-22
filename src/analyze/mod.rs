@@ -31,6 +31,7 @@
 //! - [`lance`] - Lance table analysis
 
 pub mod analyzer;
+pub mod common;
 pub mod delta;
 #[cfg(feature = "hudi")]
 pub mod hudi;

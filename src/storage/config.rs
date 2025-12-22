@@ -11,6 +11,7 @@
 // specific language governing permissions and limitations under
 // each license.
 
+use crate::storage::error::StorageError;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
@@ -124,20 +125,58 @@ impl StorageConfig {
     /// # Returns
     ///
     /// A new `StorageConfig` instance with default options for the specified storage type.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the storage type is not recognized. Use [`try_new`](Self::try_new)
+    /// for a fallible version that returns a `Result`.
     pub fn new(storage_type: impl Into<String>) -> Self {
+        let storage_type_str: String = storage_type.into();
+        Self::try_new(&storage_type_str)
+            .unwrap_or_else(|_| panic!("Unknown storage type: {}", storage_type_str))
+    }
+
+    /// Try to create a new storage configuration.
+    ///
+    /// This is the fallible version of [`new`](Self::new) that returns a `Result`
+    /// instead of panicking on invalid input.
+    ///
+    /// # Arguments
+    ///
+    /// * `storage_type` - The type of storage provider ("local", "aws", "azure", "gcs")
+    ///
+    /// # Returns
+    ///
+    /// * `Ok(StorageConfig)` - A new configuration with default options
+    /// * `Err(StorageError)` - If the storage type is not recognized
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use lake_pulse::storage::StorageConfig;
+    ///
+    /// let config = StorageConfig::try_new("aws")?;
+    /// # Ok::<(), lake_pulse::storage::StorageError>(())
+    /// ```
+    pub fn try_new(storage_type: impl Into<String>) -> Result<Self, StorageError> {
         let storage_type_str = storage_type.into();
         let storage_type = match storage_type_str.to_lowercase().as_str() {
             "local" => StorageType::Local,
             "aws" | "s3" => StorageType::Aws,
             "azure" => StorageType::Azure,
             "gcs" | "gcp" => StorageType::Gcs,
-            _ => panic!("Unknown storage type: {}", storage_type_str),
+            _ => {
+                return Err(StorageError::ConfigError(format!(
+                    "Unknown storage type: {}",
+                    storage_type_str
+                )))
+            }
         };
 
-        Self {
+        Ok(Self {
             storage_type,
             options: Self::default_options(),
-        }
+        })
     }
 
     /// Create a local filesystem storage configuration.
@@ -347,6 +386,37 @@ mod tests {
     #[should_panic(expected = "Unknown storage type")]
     fn test_storage_config_new_invalid() {
         StorageConfig::new("invalid");
+    }
+
+    #[test]
+    fn test_storage_config_try_new_valid() {
+        let config = StorageConfig::try_new("aws").unwrap();
+        assert_eq!(config.storage_type, StorageType::Aws);
+
+        let config = StorageConfig::try_new("s3").unwrap();
+        assert_eq!(config.storage_type, StorageType::Aws);
+
+        let config = StorageConfig::try_new("local").unwrap();
+        assert_eq!(config.storage_type, StorageType::Local);
+
+        let config = StorageConfig::try_new("azure").unwrap();
+        assert_eq!(config.storage_type, StorageType::Azure);
+
+        let config = StorageConfig::try_new("gcs").unwrap();
+        assert_eq!(config.storage_type, StorageType::Gcs);
+
+        let config = StorageConfig::try_new("gcp").unwrap();
+        assert_eq!(config.storage_type, StorageType::Gcs);
+    }
+
+    #[test]
+    fn test_storage_config_try_new_invalid() {
+        let result = StorageConfig::try_new("invalid");
+        assert!(result.is_err());
+
+        let err = result.unwrap_err();
+        assert!(err.to_string().contains("Unknown storage type"));
+        assert!(err.to_string().contains("invalid"));
     }
 
     #[test]
