@@ -35,7 +35,6 @@ pub struct FileMetadata {
 ///
 /// This trait provides a unified interface for interacting with different
 /// cloud storage providers (AWS S3, Azure Data Lake, GCS, Local filesystem).
-#[allow(dead_code)]
 #[async_trait]
 pub trait StorageProvider: Send + Sync {
     /// Get the base path/prefix for this storage provider.

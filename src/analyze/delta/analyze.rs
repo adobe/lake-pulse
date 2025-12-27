@@ -225,12 +225,33 @@ impl DeltaAnalyzer {
         &self,
         metadata_files: &[FileMetadata],
     ) -> Result<Vec<String>, Box<dyn Error + Send + Sync>> {
+        // Process both JSON files and checkpoint Parquet files
+        let json_refs = self
+            .find_referenced_files_in_json_files(metadata_files)
+            .await?;
+        let checkpoint_refs = self
+            .find_referenced_files_in_checkpoint_files(metadata_files)
+            .await?;
+
+        // Combine results from both sources
+        let mut referenced_files = json_refs;
+        referenced_files.extend(checkpoint_refs);
+
+        Ok(referenced_files)
+    }
+
+    /// Find all data files referenced in Delta JSON metadata files.
+    ///
+    /// This is an internal helper that processes only `.json` files from the
+    /// Delta transaction log.
+    async fn find_referenced_files_in_json_files(
+        &self,
+        metadata_files: &[FileMetadata],
+    ) -> Result<Vec<String>, Box<dyn Error + Send + Sync>> {
         let storage_provider = Arc::clone(&self.storage_provider);
-        // TODO: For now, let's check only JSON files.
-        //       In the future, we should also check checkpoints.
         let metadata_files_owned = metadata_files
             .iter()
-            .filter(|f| f.path.contains(".json"))
+            .filter(|f| f.path.ends_with(".json"))
             .cloned()
             .collect::<Vec<_>>();
 
@@ -313,6 +334,134 @@ impl DeltaAnalyzer {
         Ok(referenced_files)
     }
 
+    /// Find all data files referenced in Delta checkpoint Parquet files.
+    ///
+    /// This is an internal helper that reads checkpoint files (`.parquet`) from the
+    /// Delta transaction log and extracts file paths from `add` actions. Checkpoint
+    /// files contain a snapshot of the table state, so the `add` actions represent
+    /// currently active files.
+    async fn find_referenced_files_in_checkpoint_files(
+        &self,
+        metadata_files: &[FileMetadata],
+    ) -> Result<Vec<String>, Box<dyn Error + Send + Sync>> {
+        let storage_provider = Arc::clone(&self.storage_provider);
+
+        let checkpoint_files: Vec<_> = metadata_files
+            .iter()
+            .filter(|f| f.path.ends_with(".parquet"))
+            .cloned()
+            .collect();
+
+        if checkpoint_files.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        let results: Vec<Result<Vec<String>, Box<dyn Error + Send + Sync>>> =
+            stream::iter(checkpoint_files)
+                .map(|metadata_file| {
+                    info!(
+                        "Extracting file references from checkpoint file={}",
+                        &metadata_file.path
+                    );
+                    let storage_provider = Arc::clone(&storage_provider);
+                    let path = metadata_file.path.clone();
+
+                    async move {
+                        let read_file_start = SystemTime::now();
+                        let content = storage_provider
+                            .read_file(&path)
+                            .await
+                            .map_err(|e| Box::new(e) as Box<dyn Error + Send + Sync>)?;
+                        info!(
+                            "Read checkpoint file={}, took={}ms",
+                            &path,
+                            read_file_start.elapsed()?.as_millis()
+                        );
+
+                        let reader =
+                            SerializedFileReader::new(Bytes::copy_from_slice(content.as_slice()))
+                                .map_err(|e| Box::new(e) as Box<dyn Error + Send + Sync>)?;
+
+                        // Project only the `add` column to extract file paths
+                        let file_schema = reader.metadata().file_metadata().schema();
+                        let schema_name = file_schema.name();
+                        let fields = file_schema.get_fields();
+
+                        let selected_fields: Vec<_> = fields
+                            .iter()
+                            .filter(|&f| f.name() == "add")
+                            .cloned()
+                            .collect();
+
+                        if selected_fields.is_empty() {
+                            // No `add` column in this checkpoint - return empty
+                            info!("No 'add' column found in checkpoint file={}", &path);
+                            return Ok(Vec::new());
+                        }
+
+                        let schema_projection = Type::group_type_builder(schema_name)
+                            .with_fields(selected_fields)
+                            .build()
+                            .map_err(|e| Box::new(e) as Box<dyn Error + Send + Sync>)?;
+
+                        let row_iter =
+                            reader.get_row_iter(Some(schema_projection)).map_err(|e| {
+                                info!("Error creating row iterator for checkpoint: {:?}", e);
+                                Box::new(e) as Box<dyn Error + Send + Sync>
+                            })?;
+
+                        let mut file_refs = Vec::new();
+                        for row in row_iter {
+                            let row =
+                                row.map_err(|e| Box::new(e) as Box<dyn Error + Send + Sync>)?;
+
+                            // Each row has an `add` column which is a struct containing `path`
+                            if let Some((_, Field::Group(add_group))) = row.get_column_iter().next()
+                            {
+                                for (field_name, field_value) in add_group.get_column_iter() {
+                                    if field_name == "path" {
+                                        // Handle both Str and Bytes variants
+                                        match field_value {
+                                            Field::Str(path_str) => {
+                                                file_refs.push(path_str.clone());
+                                            }
+                                            Field::Bytes(byte_array) => {
+                                                if let Ok(path_str) =
+                                                    std::str::from_utf8(byte_array.data())
+                                                {
+                                                    file_refs.push(path_str.to_string());
+                                                }
+                                            }
+                                            _ => {}
+                                        }
+                                    }
+                                }
+                            }
+                        }
+
+                        info!(
+                            "Extracted {} file references from checkpoint file={}, took={}ms",
+                            file_refs.len(),
+                            &path,
+                            read_file_start.elapsed()?.as_millis()
+                        );
+
+                        Ok(file_refs)
+                    }
+                })
+                .buffer_unordered(self.parallelism)
+                .collect()
+                .await;
+
+        // Flatten results and collect errors
+        let mut referenced_files = Vec::new();
+        for result in results {
+            referenced_files.extend(result?);
+        }
+
+        Ok(referenced_files)
+    }
+
     /// Process a single Delta metadata file and extract metrics.
     ///
     /// Reads and parses a Delta transaction log file to extract various metrics
@@ -373,7 +522,6 @@ impl DeltaAnalyzer {
         for entry in json {
             // Extract clustering columns from clusterBy
             if let Some(cluster_by) = entry.get("clusterBy") {
-                // TODO: Double check if `.as_array()` is correct. Maybe it should be `.as_object()`?
                 if let Some(cluster_array) = cluster_by.as_array() {
                     let clustering_columns: Vec<String> = cluster_array
                         .iter()
@@ -392,7 +540,6 @@ impl DeltaAnalyzer {
             // Extract clustering from metaData
             if let Some(metadata) = entry.get("metaData") {
                 if let Some(cluster_by) = metadata.get("clusterBy") {
-                    // TODO: Double check if `.as_array()` is correct. Maybe it should be `.as_object()`?
                     if let Some(cluster_array) = cluster_by.as_array() {
                         if result.clustering_columns.is_empty() {
                             result.clustering_columns = cluster_array
@@ -466,6 +613,9 @@ impl DeltaAnalyzer {
                             version: current_version,
                             timestamp: entry.get("timestamp").and_then(|t| t.as_u64()).unwrap_or(0),
                             // TODO: Is this correct?
+                            //       This section detect protocol changes which does not come with
+                            //       a schema change. Should we consider the change of protocol version
+                            //       a schema change also?
                             schema: Value::Null,
                             is_breaking: true,
                         });
@@ -1023,7 +1173,10 @@ impl DeltaAnalyzer {
             avg_cluster_size_bytes,
         });
 
-        // TODO: Why is this all zeros?
+        // Initialize file_compaction with placeholder values. The actual metrics
+        // are calculated later by `TableAnalyzer::analyze_file_compaction()` which
+        // has access to individual file sizes. We set this here to pass along
+        // z_order_opportunity and z_order_columns to the base analyzer.
         metrics.file_compaction = Some(FileCompactionMetrics {
             compaction_opportunity_score: 0.0,
             small_files_count: 0,
@@ -1172,13 +1325,12 @@ impl DeltaAnalyzer {
         let mut size = 0u64;
 
         // Estimate size based on actions in the transaction log
-        if let Some(add_actions) = json.get("add") {
-            // TODO: Double check if `.as_array()` is correct. Maybe it should be `.as_object()`?
-            if let Some(add_array) = add_actions.as_array() {
-                for add_action in add_array {
-                    if let Some(file_size) = add_action.get("sizeInBytes") {
-                        size += file_size.as_u64().unwrap_or(0);
-                    }
+        // In Delta Lake, each JSON line has at most one "add" action as an object
+        if let Some(add_action) = json.get("add") {
+            if let Some(add_obj) = add_action.as_object() {
+                // Delta Lake uses "size" field for file size in bytes
+                if let Some(file_size) = add_obj.get("size") {
+                    size += file_size.as_u64().unwrap_or(0);
                 }
             }
         }
@@ -1215,7 +1367,6 @@ impl DeltaAnalyzer {
         let mut foreign_key = 0;
 
         if let Some(fields) = schema.get("fields") {
-            // TODO: Double check if `.as_array()` is correct. Maybe it should be `.as_object()`?
             if let Some(fields_array) = fields.as_array() {
                 for field in fields_array {
                     total += 1;
@@ -1705,13 +1856,12 @@ mod tests {
     #[test]
     fn test_estimate_snapshot_size_with_add() {
         let analyzer = create_test_analyzer();
-        // The implementation expects "add" to be an array of objects with "sizeInBytes"
+        // Delta Lake format: "add" is an object with "size" field (not an array)
         let json = json!({
-            "add": [
-                {
-                    "sizeInBytes": 5000
-                }
-            ]
+            "add": {
+                "path": "part-00000.parquet",
+                "size": 5000
+            }
         });
 
         let size = analyzer.estimate_snapshot_size(&json);
@@ -2646,11 +2796,68 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_find_referenced_files_ignores_checkpoints() {
-        let mock_storage = Arc::new(ConfigurableMockStorageProvider::new("/test"));
+    async fn test_find_referenced_files_processes_checkpoints() {
+        use parquet::basic::{Repetition, Type as PhysicalType};
+        use parquet::column::writer::ColumnWriter;
+        use parquet::file::properties::WriterProperties;
+        use parquet::file::writer::SerializedFileWriter;
+        use parquet::schema::types::Type;
+
+        // Build a Delta checkpoint schema with an `add` struct containing `path`
+        let path_field = Type::primitive_type_builder("path", PhysicalType::BYTE_ARRAY)
+            .with_repetition(Repetition::OPTIONAL)
+            .build()
+            .unwrap();
+
+        let add_group = Type::group_type_builder("add")
+            .with_repetition(Repetition::OPTIONAL)
+            .with_fields(vec![Arc::new(path_field)])
+            .build()
+            .unwrap();
+
+        let schema = Type::group_type_builder("spark_schema")
+            .with_fields(vec![Arc::new(add_group)])
+            .build()
+            .unwrap();
+
+        // Write a Parquet file with add actions
+        let mut buffer = Vec::new();
+        {
+            let props = WriterProperties::builder().build();
+            let schema_arc = Arc::new(schema);
+            let mut writer =
+                SerializedFileWriter::new(&mut buffer, schema_arc, Arc::new(props)).unwrap();
+
+            let mut row_group_writer = writer.next_row_group().unwrap();
+
+            if let Some(mut col_writer) = row_group_writer.next_column().unwrap() {
+                if let ColumnWriter::ByteArrayColumnWriter(ref mut typed_writer) =
+                    col_writer.untyped()
+                {
+                    typed_writer
+                        .write_batch(
+                            &[parquet::data_type::ByteArray::from(
+                                "checkpoint-file.parquet",
+                            )],
+                            Some(&[2]),
+                            None,
+                        )
+                        .unwrap();
+                }
+                col_writer.close().unwrap();
+            }
+
+            row_group_writer.close().unwrap();
+            writer.close().unwrap();
+        }
+
+        let mock_storage = Arc::new(
+            ConfigurableMockStorageProvider::new("/test")
+                .with_file_content("_delta_log/00000000000000000010.checkpoint.parquet", buffer),
+        );
         let analyzer = DeltaAnalyzer::new(mock_storage, 1);
 
-        // Checkpoint files should be filtered out (only .json files are processed)
+        // Checkpoint files should now be processed
         let metadata_files = vec![FileMetadata {
             path: "_delta_log/00000000000000000010.checkpoint.parquet".to_string(),
             size: 4096,
@@ -2661,7 +2868,10 @@ mod tests {
             .find_referenced_files(&metadata_files)
             .await
             .unwrap();
-        assert!(result.is_empty());
+
+        // Should find the file from the checkpoint
+        assert_eq!(result.len(), 1);
+        assert!(result.contains(&"checkpoint-file.parquet".to_string()));
     }
 
     #[tokio::test]
@@ -2888,5 +3098,201 @@ mod tests {
         assert!(metrics.schema_evolution.is_some());
         // Constraints metrics should be populated
         assert!(metrics.table_constraints.is_some());
+    }
+
+    // ========== Tests for find_referenced_files_in_checkpoint_files ==========
+
+    #[tokio::test]
+    async fn test_find_referenced_files_in_checkpoint_files_empty() {
+        let mock_storage = Arc::new(ConfigurableMockStorageProvider::new("/test"));
+        let analyzer = DeltaAnalyzer::new(mock_storage, 1);
+
+        let result = analyzer
+            .find_referenced_files_in_checkpoint_files(&[])
+            .await
+            .unwrap();
+        assert!(result.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_find_referenced_files_in_checkpoint_files_ignores_json() {
+        let mock_storage = Arc::new(ConfigurableMockStorageProvider::new("/test"));
+        let analyzer = DeltaAnalyzer::new(mock_storage, 1);
+
+        // JSON files should be filtered out (only .parquet files are processed)
+        let metadata_files = vec![FileMetadata {
+            path: "_delta_log/00000000000000000000.json".to_string(),
+            size: 100,
+            last_modified: None,
+        }];
+
+        let result = analyzer
+            .find_referenced_files_in_checkpoint_files(&metadata_files)
+            .await
+            .unwrap();
+        assert!(result.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_find_referenced_files_in_checkpoint_files_with_add_actions() {
+        use parquet::basic::{Repetition, Type as PhysicalType};
+        use parquet::column::writer::ColumnWriter;
+        use parquet::file::properties::WriterProperties;
+        use parquet::file::writer::SerializedFileWriter;
+        use parquet::schema::types::Type;
+
+        // Build a Delta checkpoint schema with an `add` struct containing `path`
+        // The `add` group is OPTIONAL (can be null for non-add rows)
+        // The `path` inside is REQUIRED when add is present
+        let path_field = Type::primitive_type_builder("path", PhysicalType::BYTE_ARRAY)
+            .with_repetition(Repetition::OPTIONAL)
+            .build()
+            .unwrap();
+
+        let add_group = Type::group_type_builder("add")
+            .with_repetition(Repetition::OPTIONAL)
+            .with_fields(vec![Arc::new(path_field)])
+            .build()
+            .unwrap();
+
+        let schema = Type::group_type_builder("spark_schema")
+            .with_fields(vec![Arc::new(add_group)])
+            .build()
+            .unwrap();
+
+        // Write a Parquet file with add actions
+        // For nested optional groups, definition levels work as follows:
+        // - def_level 0 = add is null
+        // - def_level 1 = add is present but path is null
+        // - def_level 2 = add is present and path is present
+        let mut buffer = Vec::new();
+        {
+            let props = WriterProperties::builder().build();
+            let schema_arc = Arc::new(schema);
+            let mut writer =
+                SerializedFileWriter::new(&mut buffer, schema_arc, Arc::new(props)).unwrap();
+
+            let mut row_group_writer = writer.next_row_group().unwrap();
+
+            // Write the `add.path` column for 2 rows
+            if let Some(mut col_writer) = row_group_writer.next_column().unwrap() {
+                if let ColumnWriter::ByteArrayColumnWriter(ref mut typed_writer) =
+                    col_writer.untyped()
+                {
+                    typed_writer
+                        .write_batch(
+                            &[
+                                parquet::data_type::ByteArray::from("part-00000.parquet"),
+                                parquet::data_type::ByteArray::from("part-00001.parquet"),
+                            ],
+                            Some(&[2, 2]), // def_level 2 = both add and path are present
+                            None,          // no repetition levels
+                        )
+                        .unwrap();
+                }
+                col_writer.close().unwrap();
+            }
+
+            row_group_writer.close().unwrap();
+            writer.close().unwrap();
+        }
+
+        let mock_storage = Arc::new(
+            ConfigurableMockStorageProvider::new("/test")
+                .with_file_content("_delta_log/00000000000000000010.checkpoint.parquet", buffer),
+        );
+        let analyzer = DeltaAnalyzer::new(mock_storage, 1);
+
+        let metadata_files = vec![FileMetadata {
+            path: "_delta_log/00000000000000000010.checkpoint.parquet".to_string(),
+            size: 4096,
+            last_modified: None,
+        }];
+
+        let result = analyzer
+            .find_referenced_files_in_checkpoint_files(&metadata_files)
+            .await
+            .unwrap();
+
+        assert_eq!(result.len(), 2);
+        assert!(result.contains(&"part-00000.parquet".to_string()));
+        assert!(result.contains(&"part-00001.parquet".to_string()));
+    }
+
+    #[tokio::test]
+    async fn test_find_referenced_files_in_checkpoint_files_no_add_column() {
+        use parquet::basic::{Repetition, Type as PhysicalType};
+        use parquet::column::writer::ColumnWriter;
+        use parquet::file::properties::WriterProperties;
+        use parquet::file::writer::SerializedFileWriter;
+        use parquet::schema::types::Type;
+
+        // Build a schema without `add` column (e.g., only `metaData`)
+        let schema_string_field =
+            Type::primitive_type_builder("schemaString", PhysicalType::BYTE_ARRAY)
+                .with_repetition(Repetition::OPTIONAL)
+                .build()
+                .unwrap();
+
+        let metadata_group = Type::group_type_builder("metaData")
+            .with_repetition(Repetition::OPTIONAL)
+            .with_fields(vec![Arc::new(schema_string_field)])
+            .build()
+            .unwrap();
+
+        let schema = Type::group_type_builder("spark_schema")
+            .with_fields(vec![Arc::new(metadata_group)])
+            .build()
+            .unwrap();
+
+        // Write a Parquet file without add actions
+        let mut buffer = Vec::new();
+        {
+            let props = WriterProperties::builder().build();
+            let schema_arc = Arc::new(schema);
+            let mut writer =
+                SerializedFileWriter::new(&mut buffer, schema_arc, Arc::new(props)).unwrap();
+
+            let mut row_group_writer = writer.next_row_group().unwrap();
+
+            // Write the `metaData.schemaString` column
+            if let Some(mut col_writer) = row_group_writer.next_column().unwrap() {
+                if let ColumnWriter::ByteArrayColumnWriter(ref mut typed_writer) =
+                    col_writer.untyped()
+                {
+                    typed_writer
+                        .write_batch(
+                            &[parquet::data_type::ByteArray::from("{}")],
+                            Some(&[1]),
+                            None,
+                        )
+                        .unwrap();
+                }
+                col_writer.close().unwrap();
+            }
+
+            row_group_writer.close().unwrap();
+            writer.close().unwrap();
+        }
+
+        let mock_storage = Arc::new(
+            ConfigurableMockStorageProvider::new("/test")
+                .with_file_content("_delta_log/00000000000000000010.checkpoint.parquet", buffer),
+        );
+        let analyzer = DeltaAnalyzer::new(mock_storage, 1);
+
+        let metadata_files = vec![FileMetadata {
+            path: "_delta_log/00000000000000000010.checkpoint.parquet".to_string(),
+            size: 4096,
+            last_modified: None,
+        }];
+
+        let result = analyzer
+            .find_referenced_files_in_checkpoint_files(&metadata_files)
+            .await
+            .unwrap();
+
+        // Should return empty since there's no `add` column
+        assert!(result.is_empty());
     }
 }

@@ -41,7 +41,6 @@ futures = { version = "0.3", features = ["std"] }
 bytes = "1.0"
 chrono = "0.4"
 log = "0.4.28"
-regex = "1.12.2"
 parquet = "57.1"
 
 [dev-dependencies]

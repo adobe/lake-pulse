@@ -2546,6 +2546,434 @@ mod tests {
             .any(|r| r.contains("snapshot retention risk") && r.contains("VACUUM")));
     }
 
+    #[test]
+    fn test_generate_recommendations_clustering_high_files_per_cluster() {
+        let mut metrics = HealthMetrics::new();
+        metrics.clustering = Some(ClusteringInfo {
+            clustering_columns: vec!["col1".to_string()],
+            cluster_count: 5,
+            avg_files_per_cluster: 60.0, // > 50
+            avg_cluster_size_bytes: 1024.0 * 1024.0,
+        });
+
+        metrics.generate_recommendations();
+
+        assert!(metrics
+            .recommendations
+            .iter()
+            .any(|r| r.contains("files per cluster") && r.contains("optimizing")));
+    }
+
+    #[test]
+    fn test_generate_recommendations_clustering_too_many_columns() {
+        let mut metrics = HealthMetrics::new();
+        metrics.clustering = Some(ClusteringInfo {
+            clustering_columns: vec![
+                "col1".to_string(),
+                "col2".to_string(),
+                "col3".to_string(),
+                "col4".to_string(),
+                "col5".to_string(),
+            ],
+            cluster_count: 10,
+            avg_files_per_cluster: 5.0,
+            avg_cluster_size_bytes: 1024.0 * 1024.0,
+        });
+
+        metrics.generate_recommendations();
+
+        assert!(metrics
+            .recommendations
+            .iter()
+            .any(|r| r.contains("Too many clustering columns")));
+    }
+
+    #[test]
+    fn test_generate_recommendations_clustering_no_columns() {
+        let mut metrics = HealthMetrics::new();
+        metrics.clustering = Some(ClusteringInfo {
+            clustering_columns: vec![],
+            cluster_count: 0,
+            avg_files_per_cluster: 0.0,
+            avg_cluster_size_bytes: 0.0,
+        });
+
+        metrics.generate_recommendations();
+
+        assert!(metrics
+            .recommendations
+            .iter()
+            .any(|r| r.contains("No clustering detected")));
+    }
+
+    #[test]
+    fn test_generate_recommendations_deletion_vectors_high_impact() {
+        let mut metrics = HealthMetrics::new();
+        metrics.deletion_vector_metrics = Some(DeletionVectorMetrics {
+            deletion_vector_count: 10,
+            total_deletion_vector_size_bytes: 1024,
+            avg_deletion_vector_size_bytes: 102.4,
+            deletion_vector_age_days: 5.0,
+            deleted_rows_count: 100,
+            deletion_vector_impact_score: 0.8, // > 0.7
+        });
+
+        metrics.generate_recommendations();
+
+        assert!(metrics
+            .recommendations
+            .iter()
+            .any(|r| r.contains("deletion vector impact") && r.contains("VACUUM")));
+    }
+
+    #[test]
+    fn test_generate_recommendations_deletion_vectors_many_vectors() {
+        let mut metrics = HealthMetrics::new();
+        metrics.deletion_vector_metrics = Some(DeletionVectorMetrics {
+            deletion_vector_count: 60, // > 50
+            total_deletion_vector_size_bytes: 1024,
+            avg_deletion_vector_size_bytes: 17.0,
+            deletion_vector_age_days: 5.0,
+            deleted_rows_count: 100,
+            deletion_vector_impact_score: 0.3,
+        });
+
+        metrics.generate_recommendations();
+
+        assert!(metrics
+            .recommendations
+            .iter()
+            .any(|r| r.contains("Many deletion vectors")));
+    }
+
+    #[test]
+    fn test_generate_recommendations_deletion_vectors_old() {
+        let mut metrics = HealthMetrics::new();
+        metrics.deletion_vector_metrics = Some(DeletionVectorMetrics {
+            deletion_vector_count: 5,
+            total_deletion_vector_size_bytes: 1024,
+            avg_deletion_vector_size_bytes: 204.8,
+            deletion_vector_age_days: 45.0, // > 30
+            deleted_rows_count: 100,
+            deletion_vector_impact_score: 0.3,
+        });
+
+        metrics.generate_recommendations();
+
+        assert!(metrics
+            .recommendations
+            .iter()
+            .any(|r| r.contains("Old deletion vectors")));
+    }
+
+    #[test]
+    fn test_generate_recommendations_schema_unstable() {
+        let mut metrics = HealthMetrics::new();
+        metrics.schema_evolution = Some(SchemaEvolutionMetrics {
+            total_schema_changes: 10,
+            breaking_changes: 2,
+            non_breaking_changes: 8,
+            schema_stability_score: 0.3, // < 0.5
+            days_since_last_change: 30.0,
+            schema_change_frequency: 0.5,
+            current_schema_version: 10,
+        });
+
+        metrics.generate_recommendations();
+
+        assert!(metrics
+            .recommendations
+            .iter()
+            .any(|r| r.contains("Unstable schema")));
+    }
+
+    #[test]
+    fn test_generate_recommendations_schema_many_breaking_changes() {
+        let mut metrics = HealthMetrics::new();
+        metrics.schema_evolution = Some(SchemaEvolutionMetrics {
+            total_schema_changes: 10,
+            breaking_changes: 7, // > 5
+            non_breaking_changes: 3,
+            schema_stability_score: 0.6,
+            days_since_last_change: 30.0,
+            schema_change_frequency: 0.5,
+            current_schema_version: 10,
+        });
+
+        metrics.generate_recommendations();
+
+        assert!(metrics
+            .recommendations
+            .iter()
+            .any(|r| r.contains("breaking schema changes")));
+    }
+
+    #[test]
+    fn test_generate_recommendations_schema_high_frequency() {
+        let mut metrics = HealthMetrics::new();
+        metrics.schema_evolution = Some(SchemaEvolutionMetrics {
+            total_schema_changes: 10,
+            breaking_changes: 1,
+            non_breaking_changes: 9,
+            schema_stability_score: 0.7,
+            days_since_last_change: 30.0,
+            schema_change_frequency: 1.5, // > 1.0
+            current_schema_version: 10,
+        });
+
+        metrics.generate_recommendations();
+
+        assert!(metrics
+            .recommendations
+            .iter()
+            .any(|r| r.contains("schema change frequency")));
+    }
+
+    #[test]
+    fn test_generate_recommendations_schema_recent_change() {
+        let mut metrics = HealthMetrics::new();
+        metrics.schema_evolution = Some(SchemaEvolutionMetrics {
+            total_schema_changes: 5,
+            breaking_changes: 0,
+            non_breaking_changes: 5,
+            schema_stability_score: 0.9,
+            days_since_last_change: 0.5, // < 1.0
+            schema_change_frequency: 0.1,
+            current_schema_version: 5,
+        });
+
+        metrics.generate_recommendations();
+
+        assert!(metrics
+            .recommendations
+            .iter()
+            .any(|r| r.contains("Recent schema changes")));
+    }
+
+    #[test]
+    fn test_generate_recommendations_time_travel_high_cost() {
+        let mut metrics = HealthMetrics::new();
+        metrics.time_travel_metrics = Some(TimeTravelMetrics {
+            total_snapshots: 50,
+            oldest_snapshot_age_days: 90.0,
+            newest_snapshot_age_days: 0.5,
+            total_historical_size_bytes: 1024 * 1024 * 1024,
+            avg_snapshot_size_bytes: 20.0 * 1024.0 * 1024.0,
+            storage_cost_impact_score: 0.8, // > 0.7
+            retention_efficiency_score: 0.6,
+            recommended_retention_days: 30,
+        });
+
+        metrics.generate_recommendations();
+
+        assert!(metrics
+            .recommendations
+            .iter()
+            .any(|r| r.contains("time travel storage costs")));
+    }
+
+    #[test]
+    fn test_generate_recommendations_time_travel_inefficient_retention() {
+        let mut metrics = HealthMetrics::new();
+        metrics.time_travel_metrics = Some(TimeTravelMetrics {
+            total_snapshots: 50,
+            oldest_snapshot_age_days: 90.0,
+            newest_snapshot_age_days: 0.5,
+            total_historical_size_bytes: 1024 * 1024 * 1024,
+            avg_snapshot_size_bytes: 20.0 * 1024.0 * 1024.0,
+            storage_cost_impact_score: 0.3,
+            retention_efficiency_score: 0.3, // < 0.5
+            recommended_retention_days: 30,
+        });
+
+        metrics.generate_recommendations();
+
+        assert!(metrics
+            .recommendations
+            .iter()
+            .any(|r| r.contains("Inefficient snapshot retention")));
+    }
+
+    #[test]
+    fn test_generate_recommendations_time_travel_high_snapshot_count() {
+        let mut metrics = HealthMetrics::new();
+        metrics.time_travel_metrics = Some(TimeTravelMetrics {
+            total_snapshots: 1500, // > 1000
+            oldest_snapshot_age_days: 365.0,
+            newest_snapshot_age_days: 0.1,
+            total_historical_size_bytes: 10 * 1024 * 1024 * 1024,
+            avg_snapshot_size_bytes: 6.7 * 1024.0 * 1024.0,
+            storage_cost_impact_score: 0.5,
+            retention_efficiency_score: 0.6,
+            recommended_retention_days: 30,
+        });
+
+        metrics.generate_recommendations();
+
+        assert!(metrics
+            .recommendations
+            .iter()
+            .any(|r| r.contains("High snapshot count")));
+    }
+
+    #[test]
+    fn test_generate_recommendations_constraints_low_quality() {
+        let mut metrics = HealthMetrics::new();
+        metrics.table_constraints = Some(TableConstraintsMetrics {
+            total_constraints: 5,
+            check_constraints: 1,
+            not_null_constraints: 3,
+            unique_constraints: 1,
+            foreign_key_constraints: 0,
+            constraint_violation_risk: 0.2,
+            data_quality_score: 0.3, // < 0.5
+            constraint_coverage_score: 0.5,
+        });
+
+        metrics.generate_recommendations();
+
+        assert!(metrics
+            .recommendations
+            .iter()
+            .any(|r| r.contains("Low data quality score")));
+    }
+
+    #[test]
+    fn test_generate_recommendations_constraints_high_violation_risk() {
+        let mut metrics = HealthMetrics::new();
+        metrics.table_constraints = Some(TableConstraintsMetrics {
+            total_constraints: 5,
+            check_constraints: 1,
+            not_null_constraints: 3,
+            unique_constraints: 1,
+            foreign_key_constraints: 0,
+            constraint_violation_risk: 0.8, // > 0.7
+            data_quality_score: 0.7,
+            constraint_coverage_score: 0.5,
+        });
+
+        metrics.generate_recommendations();
+
+        assert!(metrics
+            .recommendations
+            .iter()
+            .any(|r| r.contains("constraint violation risk")));
+    }
+
+    #[test]
+    fn test_generate_recommendations_constraints_low_coverage() {
+        let mut metrics = HealthMetrics::new();
+        metrics.table_constraints = Some(TableConstraintsMetrics {
+            total_constraints: 2,
+            check_constraints: 0,
+            not_null_constraints: 2,
+            unique_constraints: 0,
+            foreign_key_constraints: 0,
+            constraint_violation_risk: 0.2,
+            data_quality_score: 0.7,
+            constraint_coverage_score: 0.2, // < 0.3
+        });
+
+        metrics.generate_recommendations();
+
+        assert!(metrics
+            .recommendations
+            .iter()
+            .any(|r| r.contains("Low constraint coverage")));
+    }
+
+    #[test]
+    fn test_generate_recommendations_compaction_high_opportunity() {
+        let mut metrics = HealthMetrics::new();
+        metrics.file_compaction = Some(FileCompactionMetrics {
+            compaction_opportunity_score: 0.8, // > 0.7
+            small_files_count: 100,
+            small_files_size_bytes: 50 * 1024 * 1024,
+            potential_compaction_files: 80,
+            estimated_compaction_savings_bytes: 20 * 1024 * 1024,
+            recommended_target_file_size_bytes: 128 * 1024 * 1024,
+            compaction_priority: "high".to_string(),
+            z_order_opportunity: false,
+            z_order_columns: vec![],
+        });
+
+        metrics.generate_recommendations();
+
+        assert!(metrics
+            .recommendations
+            .iter()
+            .any(|r| r.contains("file compaction opportunity")));
+    }
+
+    #[test]
+    fn test_generate_recommendations_compaction_critical_priority() {
+        let mut metrics = HealthMetrics::new();
+        metrics.file_compaction = Some(FileCompactionMetrics {
+            compaction_opportunity_score: 0.5,
+            small_files_count: 200,
+            small_files_size_bytes: 100 * 1024 * 1024,
+            potential_compaction_files: 180,
+            estimated_compaction_savings_bytes: 50 * 1024 * 1024,
+            recommended_target_file_size_bytes: 128 * 1024 * 1024,
+            compaction_priority: "critical".to_string(),
+            z_order_opportunity: false,
+            z_order_columns: vec![],
+        });
+
+        metrics.generate_recommendations();
+
+        assert!(metrics
+            .recommendations
+            .iter()
+            .any(|r| r.contains("Critical compaction priority")));
+    }
+
+    #[test]
+    fn test_generate_recommendations_compaction_z_order_opportunity() {
+        let mut metrics = HealthMetrics::new();
+        metrics.file_compaction = Some(FileCompactionMetrics {
+            compaction_opportunity_score: 0.5,
+            small_files_count: 50,
+            small_files_size_bytes: 25 * 1024 * 1024,
+            potential_compaction_files: 40,
+            estimated_compaction_savings_bytes: 10 * 1024 * 1024,
+            recommended_target_file_size_bytes: 128 * 1024 * 1024,
+            compaction_priority: "medium".to_string(),
+            z_order_opportunity: true,
+            z_order_columns: vec!["date".to_string(), "region".to_string()],
+        });
+
+        metrics.generate_recommendations();
+
+        assert!(metrics
+            .recommendations
+            .iter()
+            .any(|r| r.contains("Z-ordering opportunity") && r.contains("date, region")));
+    }
+
+    #[test]
+    fn test_generate_recommendations_compaction_significant_savings() {
+        let mut metrics = HealthMetrics::new();
+        metrics.file_compaction = Some(FileCompactionMetrics {
+            compaction_opportunity_score: 0.5,
+            small_files_count: 500,
+            small_files_size_bytes: 500 * 1024 * 1024,
+            potential_compaction_files: 400,
+            estimated_compaction_savings_bytes: 200 * 1024 * 1024, // > 100MB
+            recommended_target_file_size_bytes: 128 * 1024 * 1024,
+            compaction_priority: "medium".to_string(),
+            z_order_opportunity: false,
+            z_order_columns: vec![],
+        });
+
+        metrics.generate_recommendations();
+
+        assert!(metrics
+            .recommendations
+            .iter()
+            .any(|r| r.contains("Significant compaction savings")));
+    }
+
     // HealthReport tests
     #[test]
     fn test_health_report_to_json() {
@@ -2808,5 +3236,431 @@ mod tests {
         assert_eq!(compaction_metrics.compaction_priority, "high");
         assert!(compaction_metrics.z_order_opportunity);
         assert_eq!(compaction_metrics.z_order_columns.len(), 2);
+    }
+
+    // ========== Display implementation coverage tests ==========
+
+    #[test]
+    fn test_health_report_display_with_clustering() {
+        let mut metrics = HealthMetrics::new();
+        metrics.total_files = 50;
+        metrics.total_size_bytes = 500 * 1024 * 1024;
+        metrics.clustering = Some(ClusteringInfo {
+            clustering_columns: vec!["date".to_string(), "region".to_string()],
+            cluster_count: 10,
+            avg_files_per_cluster: 5.0,
+            avg_cluster_size_bytes: 50.0 * 1024.0 * 1024.0,
+        });
+
+        let report = HealthReport {
+            table_path: "/test/table".to_string(),
+            table_type: "iceberg".to_string(),
+            analysis_timestamp: "2024-01-01T00:00:00Z".to_string(),
+            metrics,
+            health_score: 0.9,
+            timed_metrics: TimedLikeMetrics {
+                duration_collection: LinkedList::new(),
+            },
+        };
+
+        let display = format!("{}", report);
+        assert!(display.contains("Clustering"));
+        assert!(display.contains("Avg Cluster Size"));
+        assert!(display.contains("Clusters"));
+        assert!(display.contains("10"));
+    }
+
+    #[test]
+    fn test_health_report_display_with_deletion_vectors() {
+        let mut metrics = HealthMetrics::new();
+        metrics.total_files = 100;
+        metrics.deletion_vector_metrics = Some(DeletionVectorMetrics {
+            deletion_vector_count: 25,
+            total_deletion_vector_size_bytes: 2 * 1024 * 1024,
+            avg_deletion_vector_size_bytes: 80.0 * 1024.0,
+            deletion_vector_age_days: 15.5,
+            deleted_rows_count: 50000,
+            deletion_vector_impact_score: 0.65,
+        });
+
+        let report = HealthReport {
+            table_path: "/test/delta_table".to_string(),
+            table_type: "delta".to_string(),
+            analysis_timestamp: "2024-01-01T00:00:00Z".to_string(),
+            metrics,
+            health_score: 0.75,
+            timed_metrics: TimedLikeMetrics {
+                duration_collection: LinkedList::new(),
+            },
+        };
+
+        let display = format!("{}", report);
+        assert!(display.contains("Deletion Vectors"));
+        assert!(display.contains("Vectors"));
+        assert!(display.contains("25"));
+        assert!(display.contains("Deleted Rows"));
+        assert!(display.contains("50000"));
+    }
+
+    #[test]
+    fn test_health_report_display_with_schema_evolution() {
+        let mut metrics = HealthMetrics::new();
+        metrics.total_files = 100;
+        metrics.schema_evolution = Some(SchemaEvolutionMetrics {
+            total_schema_changes: 5,
+            breaking_changes: 1,
+            non_breaking_changes: 4,
+            schema_stability_score: 0.8,
+            days_since_last_change: 30.0,
+            schema_change_frequency: 0.1,
+            current_schema_version: 5,
+        });
+
+        let report = HealthReport {
+            table_path: "/test/table".to_string(),
+            table_type: "delta".to_string(),
+            analysis_timestamp: "2024-01-01T00:00:00Z".to_string(),
+            metrics,
+            health_score: 0.85,
+            timed_metrics: TimedLikeMetrics {
+                duration_collection: LinkedList::new(),
+            },
+        };
+
+        let display = format!("{}", report);
+        assert!(display.contains("Schema Evolution"));
+        assert!(display.contains("Total Changes"));
+        assert!(display.contains("Breaking"));
+        assert!(display.contains("Non-Breaking"));
+        assert!(display.contains("Stability"));
+    }
+
+    #[test]
+    fn test_health_report_display_with_time_travel() {
+        let mut metrics = HealthMetrics::new();
+        metrics.total_files = 100;
+        metrics.time_travel_metrics = Some(TimeTravelMetrics {
+            total_snapshots: 50,
+            oldest_snapshot_age_days: 90.0,
+            newest_snapshot_age_days: 0.5,
+            total_historical_size_bytes: 2 * 1024 * 1024 * 1024,
+            avg_snapshot_size_bytes: 40.0 * 1024.0 * 1024.0,
+            storage_cost_impact_score: 0.3,
+            retention_efficiency_score: 0.85,
+            recommended_retention_days: 30,
+        });
+
+        let report = HealthReport {
+            table_path: "/test/table".to_string(),
+            table_type: "delta".to_string(),
+            analysis_timestamp: "2024-01-01T00:00:00Z".to_string(),
+            metrics,
+            health_score: 0.8,
+            timed_metrics: TimedLikeMetrics {
+                duration_collection: LinkedList::new(),
+            },
+        };
+
+        let display = format!("{}", report);
+        assert!(display.contains("Time Travel"));
+        assert!(display.contains("Snapshots"));
+        assert!(display.contains("50"));
+        assert!(display.contains("Historical Size"));
+    }
+
+    #[test]
+    fn test_health_report_display_with_constraints_and_compaction() {
+        let mut metrics = HealthMetrics::new();
+        metrics.total_files = 100;
+        metrics.table_constraints = Some(TableConstraintsMetrics {
+            total_constraints: 10,
+            check_constraints: 3,
+            not_null_constraints: 5,
+            unique_constraints: 1,
+            foreign_key_constraints: 1,
+            constraint_violation_risk: 0.1,
+            data_quality_score: 0.95,
+            constraint_coverage_score: 0.7,
+        });
+        metrics.file_compaction = Some(FileCompactionMetrics {
+            compaction_opportunity_score: 0.6,
+            small_files_count: 40,
+            small_files_size_bytes: 100 * 1024 * 1024,
+            potential_compaction_files: 35,
+            estimated_compaction_savings_bytes: 50 * 1024 * 1024,
+            recommended_target_file_size_bytes: 128 * 1024 * 1024,
+            compaction_priority: "MEDIUM".to_string(),
+            z_order_opportunity: false,
+            z_order_columns: vec![],
+        });
+
+        let report = HealthReport {
+            table_path: "/test/table".to_string(),
+            table_type: "delta".to_string(),
+            analysis_timestamp: "2024-01-01T00:00:00Z".to_string(),
+            metrics,
+            health_score: 0.7,
+            timed_metrics: TimedLikeMetrics {
+                duration_collection: LinkedList::new(),
+            },
+        };
+
+        let display = format!("{}", report);
+        assert!(display.contains("Table Constraints"));
+        assert!(display.contains("File Compaction"));
+        assert!(display.contains("NOT NULL"));
+        assert!(display.contains("Small Files"));
+        assert!(display.contains("40"));
+    }
+
+    #[test]
+    fn test_health_report_display_with_unreferenced_files() {
+        let mut metrics = HealthMetrics::new();
+        metrics.total_files = 100;
+        metrics.unreferenced_files = vec![
+            FileInfo {
+                path: "orphan1.parquet".to_string(),
+                size_bytes: 1024 * 1024,
+                last_modified: None,
+                is_referenced: false,
+            },
+            FileInfo {
+                path: "orphan2.parquet".to_string(),
+                size_bytes: 2 * 1024 * 1024,
+                last_modified: None,
+                is_referenced: false,
+            },
+        ];
+        metrics.unreferenced_size_bytes = 3 * 1024 * 1024;
+
+        let report = HealthReport {
+            table_path: "/test/table".to_string(),
+            table_type: "delta".to_string(),
+            analysis_timestamp: "2024-01-01T00:00:00Z".to_string(),
+            metrics,
+            health_score: 0.6,
+            timed_metrics: TimedLikeMetrics {
+                duration_collection: LinkedList::new(),
+            },
+        };
+
+        let display = format!("{}", report);
+        assert!(display.contains("Unreferenced Files"));
+        assert!(display.contains("Count"));
+        assert!(display.contains("2"));
+        assert!(display.contains("Wasted Space"));
+    }
+
+    #[test]
+    fn test_health_report_display_with_all_optional_fields() {
+        let mut metrics = HealthMetrics::new();
+        metrics.total_files = 200;
+        metrics.total_size_bytes = 5 * 1024 * 1024 * 1024;
+        metrics.avg_file_size_bytes = 25.0 * 1024.0 * 1024.0;
+        metrics.partition_count = 20;
+
+        // Add all optional fields
+        metrics.clustering = Some(ClusteringInfo {
+            clustering_columns: vec!["col1".to_string()],
+            cluster_count: 5,
+            avg_files_per_cluster: 40.0,
+            avg_cluster_size_bytes: 1024.0 * 1024.0 * 1024.0,
+        });
+        metrics.deletion_vector_metrics = Some(DeletionVectorMetrics {
+            deletion_vector_count: 10,
+            total_deletion_vector_size_bytes: 500 * 1024,
+            avg_deletion_vector_size_bytes: 50.0 * 1024.0,
+            deletion_vector_age_days: 5.0,
+            deleted_rows_count: 1000,
+            deletion_vector_impact_score: 0.2,
+        });
+        metrics.schema_evolution = Some(SchemaEvolutionMetrics {
+            total_schema_changes: 3,
+            breaking_changes: 0,
+            non_breaking_changes: 3,
+            schema_stability_score: 0.95,
+            days_since_last_change: 60.0,
+            schema_change_frequency: 0.05,
+            current_schema_version: 3,
+        });
+        metrics.time_travel_metrics = Some(TimeTravelMetrics {
+            total_snapshots: 100,
+            oldest_snapshot_age_days: 180.0,
+            newest_snapshot_age_days: 0.1,
+            total_historical_size_bytes: 10 * 1024 * 1024 * 1024,
+            avg_snapshot_size_bytes: 100.0 * 1024.0 * 1024.0,
+            storage_cost_impact_score: 0.5,
+            retention_efficiency_score: 0.7,
+            recommended_retention_days: 90,
+        });
+        metrics.table_constraints = Some(TableConstraintsMetrics {
+            total_constraints: 15,
+            check_constraints: 5,
+            not_null_constraints: 8,
+            unique_constraints: 1,
+            foreign_key_constraints: 1,
+            constraint_violation_risk: 0.05,
+            data_quality_score: 0.98,
+            constraint_coverage_score: 0.85,
+        });
+        metrics.file_compaction = Some(FileCompactionMetrics {
+            compaction_opportunity_score: 0.3,
+            small_files_count: 20,
+            small_files_size_bytes: 50 * 1024 * 1024,
+            potential_compaction_files: 15,
+            estimated_compaction_savings_bytes: 20 * 1024 * 1024,
+            recommended_target_file_size_bytes: 128 * 1024 * 1024,
+            compaction_priority: "LOW".to_string(),
+            z_order_opportunity: true,
+            z_order_columns: vec!["date".to_string()],
+        });
+
+        let report = HealthReport {
+            table_path: "/production/data/table".to_string(),
+            table_type: "delta".to_string(),
+            analysis_timestamp: "2024-06-15T12:00:00Z".to_string(),
+            metrics,
+            health_score: 0.92,
+            timed_metrics: TimedLikeMetrics {
+                duration_collection: LinkedList::new(),
+            },
+        };
+
+        let display = format!("{}", report);
+
+        // Verify all sections are present
+        assert!(display.contains("Table Health Report"));
+        assert!(display.contains("92.0%"));
+        assert!(display.contains("Key Metrics"));
+        assert!(display.contains("File Size Distribution"));
+        assert!(display.contains("Data Skew Analysis"));
+        assert!(display.contains("Metadata Health"));
+        assert!(display.contains("Snapshot Health"));
+        assert!(display.contains("Clustering"));
+        assert!(display.contains("Deletion Vectors"));
+        assert!(display.contains("Schema Evolution"));
+        assert!(display.contains("Time Travel"));
+        assert!(display.contains("Table Constraints"));
+        assert!(display.contains("File Compaction"));
+    }
+
+    #[test]
+    fn test_health_report_display_size_formatting_gb() {
+        let mut metrics = HealthMetrics::new();
+        metrics.total_files = 1000;
+        metrics.total_size_bytes = 50 * 1024 * 1024 * 1024; // 50 GB
+
+        let report = HealthReport {
+            table_path: "/test/large_table".to_string(),
+            table_type: "delta".to_string(),
+            analysis_timestamp: "2024-01-01T00:00:00Z".to_string(),
+            metrics,
+            health_score: 0.8,
+            timed_metrics: TimedLikeMetrics {
+                duration_collection: LinkedList::new(),
+            },
+        };
+
+        let display = format!("{}", report);
+        assert!(display.contains("GB"));
+    }
+
+    #[test]
+    fn test_health_report_display_metadata_file_names_truncation() {
+        let mut metrics = HealthMetrics::new();
+        metrics.total_files = 100;
+        metrics.metadata_health.first_file_name =
+            Some("very_long_metadata_file_name_that_exceeds_thirty_characters.json".to_string());
+        metrics.metadata_health.last_file_name =
+            Some("another_very_long_file_name_for_testing_truncation.json".to_string());
+
+        let report = HealthReport {
+            table_path: "/test/table".to_string(),
+            table_type: "delta".to_string(),
+            analysis_timestamp: "2024-01-01T00:00:00Z".to_string(),
+            metrics,
+            health_score: 0.8,
+            timed_metrics: TimedLikeMetrics {
+                duration_collection: LinkedList::new(),
+            },
+        };
+
+        let display = format!("{}", report);
+        // Truncated names should contain "..."
+        assert!(display.contains("..."));
+    }
+
+    #[test]
+    fn test_health_report_display_zero_partitions() {
+        let mut metrics = HealthMetrics::new();
+        metrics.total_files = 10;
+        metrics.partition_count = 0;
+        metrics.data_skew.avg_partition_size = 0;
+
+        let report = HealthReport {
+            table_path: "/test/unpartitioned".to_string(),
+            table_type: "delta".to_string(),
+            analysis_timestamp: "2024-01-01T00:00:00Z".to_string(),
+            metrics,
+            health_score: 0.7,
+            timed_metrics: TimedLikeMetrics {
+                duration_collection: LinkedList::new(),
+            },
+        };
+
+        let display = format!("{}", report);
+        assert!(display.contains("N/A"));
+    }
+
+    #[test]
+    fn test_health_report_display_with_recommendations() {
+        let mut metrics = HealthMetrics::new();
+        metrics.total_files = 100;
+        metrics.recommendations = vec![
+            "Consider running OPTIMIZE".to_string(),
+            "Too many small files detected".to_string(),
+        ];
+
+        let report = HealthReport {
+            table_path: "/test/table".to_string(),
+            table_type: "delta".to_string(),
+            analysis_timestamp: "2024-01-01T00:00:00Z".to_string(),
+            metrics,
+            health_score: 0.5,
+            timed_metrics: TimedLikeMetrics {
+                duration_collection: LinkedList::new(),
+            },
+        };
+
+        let display = format!("{}", report);
+        assert!(display.contains("Recommendations"));
+        assert!(display.contains("Consider running OPTIMIZE"));
+        assert!(display.contains("Too many small files detected"));
+    }
+
+    #[test]
+    fn test_health_report_display_snapshot_ages() {
+        let mut metrics = HealthMetrics::new();
+        metrics.total_files = 50;
+        metrics.snapshot_health.oldest_snapshot_age_days = 45.5;
+        metrics.snapshot_health.newest_snapshot_age_days = 0.5;
+        metrics.snapshot_health.avg_snapshot_age_days = 20.0;
+
+        let report = HealthReport {
+            table_path: "/test/table".to_string(),
+            table_type: "delta".to_string(),
+            analysis_timestamp: "2024-01-01T00:00:00Z".to_string(),
+            metrics,
+            health_score: 0.8,
+            timed_metrics: TimedLikeMetrics {
+                duration_collection: LinkedList::new(),
+            },
+        };
+
+        let display = format!("{}", report);
+        assert!(display.contains("Oldest Snapshot"));
+        assert!(display.contains("45.5 days"));
+        assert!(display.contains("Newest Snapshot"));
+        assert!(display.contains("0.5 days"));
     }
 }
