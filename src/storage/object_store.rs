@@ -845,6 +845,8 @@ impl StorageProvider for ObjectStoreProvider {
             if storage_type == &StorageType::Local {
                 // Normalize file:// URIs to canonical format
                 // Handle paths like "file:///path", "file://path", "file:/path", or "/path"
+                // Also convert backslashes to forward slashes for Windows compatibility
+                let path = path.replace('\\', "/");
                 if let Some(without_scheme) = path.strip_prefix("file:") {
                     // Had file: prefix - strip it and any leading slashes, then add file://
                     let normalized = without_scheme.trim_start_matches('/');
@@ -1147,21 +1149,66 @@ mod tests {
 
         let uri = provider.uri_from_path("test/file.txt");
         assert!(uri.starts_with("file://"));
-        assert!(uri.contains("test/file.txt"));
+        assert!(uri.contains("test"));
+        assert!(uri.contains("file.txt"));
+
+        // Verify the URI format is valid for delta-rs
+        // On Unix: file:///tmp/... (file:// + /tmp/...)
+        // On Windows: file:///C:/... (file:// + / + C:/...)
+        #[cfg(unix)]
+        {
+            // Unix absolute paths start with /, so URI should have file:// followed by /
+            assert!(
+                uri.starts_with("file:///"),
+                "Unix absolute path URI should start with file:/// but got: {}",
+                uri
+            );
+        }
+
+        // URIs should never contain backslashes (even on Windows)
+        assert!(
+            !uri.contains('\\'),
+            "URI should use forward slashes only, but got: {}",
+            uri
+        );
     }
 
     #[tokio::test]
     async fn test_uri_from_path_with_base_path() {
+        use std::path::MAIN_SEPARATOR;
+
         let temp_dir = TempDir::new().unwrap();
         let temp_path = temp_dir.path().to_str().unwrap();
 
         let config = StorageConfig::local().with_option("path", temp_path);
         let provider = ObjectStoreProvider::new(config).await.unwrap();
 
-        // Test with path that already contains base_path
-        let full_path = format!("{}/test/file.txt", provider.base_path);
+        // Test with path that already contains base_path (using platform-native separator)
+        let full_path = format!(
+            "{}{}test{}file.txt",
+            provider.base_path, MAIN_SEPARATOR, MAIN_SEPARATOR
+        );
         let uri = provider.uri_from_path(&full_path);
-        assert!(uri.starts_with("file://"));
+
+        assert!(
+            uri.starts_with("file://"),
+            "URI should start with file:// but got: {}",
+            uri
+        );
+
+        // URIs should never contain backslashes (even on Windows)
+        assert!(
+            !uri.contains('\\'),
+            "URI should use forward slashes only, but got: {}",
+            uri
+        );
+
+        #[cfg(unix)]
+        assert!(
+            uri.starts_with("file:///"),
+            "Unix absolute path URI should start with file:/// but got: {}",
+            uri
+        );
     }
 
     #[tokio::test]
@@ -1174,7 +1221,91 @@ mod tests {
 
         let uri = provider.uri_from_path("/test/file.txt");
         assert!(uri.starts_with("file://"));
-        assert!(uri.contains("test/file.txt"));
+        assert!(uri.contains("test"));
+        assert!(uri.contains("file.txt"));
+
+        // URIs should never contain backslashes
+        assert!(
+            !uri.contains('\\'),
+            "URI should use forward slashes only, but got: {}",
+            uri
+        );
+
+        #[cfg(unix)]
+        assert!(
+            uri.starts_with("file:///"),
+            "Unix absolute path URI should start with file:/// but got: {}",
+            uri
+        );
+    }
+
+    /// Test that fix_uri produces valid URIs for various input formats.
+    /// This test specifically catches the bug where absolute paths without
+    /// file: prefix would produce file://path instead of file:///path.
+    #[tokio::test]
+    async fn test_uri_from_path_format_validation() {
+        let temp_dir = TempDir::new().unwrap();
+        let temp_path = temp_dir.path().to_str().unwrap();
+
+        let config = StorageConfig::local().with_option("path", temp_path);
+        let provider = ObjectStoreProvider::new(config).await.unwrap();
+
+        // Test various input formats
+        let test_cases = vec![
+            ("relative/path.txt", "relative path"),
+            ("/absolute/path.txt", "absolute path with leading slash"),
+        ];
+
+        for (input, description) in test_cases {
+            let uri = provider.uri_from_path(input);
+
+            // All URIs should start with file://
+            assert!(
+                uri.starts_with("file://"),
+                "{}: URI should start with file:// but got: {}",
+                description,
+                uri
+            );
+
+            // The path component should be present
+            let path_part = input.trim_start_matches('/');
+            assert!(
+                uri.contains(path_part),
+                "{}: URI should contain path '{}' but got: {}",
+                description,
+                path_part,
+                uri
+            );
+
+            // URIs should never contain backslashes (even on Windows)
+            assert!(
+                !uri.contains('\\'),
+                "{}: URI should use forward slashes only, but got: {}",
+                description,
+                uri
+            );
+
+            #[cfg(unix)]
+            {
+                // On Unix, the base_path is absolute (starts with /), so all URIs
+                // should have file:// followed by an absolute path (starting with /)
+                assert!(
+                    uri.starts_with("file:///"),
+                    "{}: Unix URI should start with file:/// but got: {}",
+                    description,
+                    uri
+                );
+
+                // Verify no double slashes in the path (except after file:)
+                let after_scheme = &uri[7..]; // Skip "file://"
+                assert!(
+                    !after_scheme.contains("//"),
+                    "{}: URI should not have double slashes in path: {}",
+                    description,
+                    uri
+                );
+            }
+        }
     }
 
     #[tokio::test]
