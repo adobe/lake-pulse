@@ -11,5 +11,48 @@
 // specific language governing permissions and limitations under
 // each license.
 
+//! Apache Hudi table reader.
+//!
+//! This module provides a reader for extracting metrics from Apache Hudi tables.
+//! It parses the Hudi timeline and metadata to provide comprehensive table statistics.
+//!
+//! ## Usage
+//!
+//! ```no_run
+//! use lake_pulse::reader::hudi::reader::HudiReader;
+//! use std::collections::HashMap;
+//!
+//! # async fn example() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+//! let storage_options = HashMap::new();
+//! let reader = HudiReader::open(
+//!     "file:///path/to/hudi/table",
+//!     &storage_options
+//! ).await?;
+//!
+//! let metrics = reader.extract_metrics().await?;
+//! println!("Table: {}", metrics.table_name);
+//! println!("Commits: {}", metrics.timeline_info.total_commits);
+//! # Ok(())
+//! # }
+//! ```
+//!
+//! ## Metrics
+//!
+//! The reader extracts:
+//!
+//! - **Table Metadata**: Table name, type (CoW/MoR), version, partition fields
+//! - **Timeline Metrics**: Commit counts by type (commit, deltacommit, clean, etc.)
+//! - **File Statistics**: Total files, size, average file size
+//! - **Partition Metrics**: Partition count and distribution
+//!
+//! ## Feature Flag
+//!
+//! Requires the `hudi` feature (part of `experimental`):
+//!
+//! ```toml
+//! [dependencies]
+//! lake-pulse = { version = "0.1", features = ["experimental"] }
+//! ```
+
 pub mod metrics;
 pub mod reader;
