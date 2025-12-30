@@ -628,10 +628,12 @@ impl Analyzer {
                 "hudi_reader",
                 &mut internal_metrics,
                 || async {
-                    let hudi_reader = HudiReader::new(
+                    let storage_options = HashMap::new();
+                    let hudi_reader = HudiReader::open(
                         self.storage_provider.uri_from_path(location).as_str(),
-                        "COPY_ON_WRITE", // Default to COW, could be detected from hoodie.properties
-                    );
+                        &storage_options,
+                    )
+                    .await;
 
                     match hudi_reader {
                         Ok(reader) => {
