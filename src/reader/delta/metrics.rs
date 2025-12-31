@@ -11,8 +11,10 @@
 // specific language governing permissions and limitations under
 // each license.
 
+use chrono::DateTime;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use std::fmt::{Display, Formatter, Result as FmtResult};
 
 /// Delta Lake specific metrics extracted from table metadata
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -161,6 +163,151 @@ impl DeltaMetrics {
 impl Default for DeltaMetrics {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+impl Display for DeltaMetrics {
+    fn fmt(&self, f: &mut Formatter<'_>) -> FmtResult {
+        writeln!(f)?;
+        writeln!(f, " Delta Specific Metrics")?;
+        writeln!(f, "{}", "━".repeat(80))?;
+        writeln!(f, " {:<40} {:>32}", "Version", self.version)?;
+        writeln!(
+            f,
+            " {:<40} {:>32}",
+            "Min Reader Version", self.protocol.min_reader_version
+        )?;
+        writeln!(
+            f,
+            " {:<40} {:>32}",
+            "Min Writer Version", self.protocol.min_writer_version
+        )?;
+        writeln!(
+            f,
+            " {:<40} {:>32}",
+            "Reader Features",
+            format!("{:?}", self.protocol.reader_features)
+        )?;
+        writeln!(
+            f,
+            " {:<40} {:>32}",
+            "Writer Features",
+            format!("{:?}", self.protocol.writer_features)
+        )?;
+        writeln!(f, " {:<31}  {:>40}", "Table ID", &self.metadata.id)?;
+        writeln!(
+            f,
+            " {:<40} {:>32}",
+            "Table Name",
+            format!("{:?}", self.metadata.name)
+        )?;
+        writeln!(
+            f,
+            " {:<40} {:>32}",
+            "Table Description",
+            format!("{:?}", self.metadata.description)
+        )?;
+        writeln!(
+            f,
+            " {:<40} {:>32}",
+            "Field Count", self.metadata.field_count
+        )?;
+        writeln!(
+            f,
+            " {:<40} {:>32}",
+            "Partition Columns",
+            format!("{:?}", self.metadata.partition_columns)
+        )?;
+        if let Some(created_time) = self.metadata.created_time {
+            if let Some(created_datetime) = DateTime::from_timestamp(created_time / 1000, 0) {
+                writeln!(
+                    f,
+                    " {:<40} {:>32}",
+                    "Created Time",
+                    created_datetime.to_rfc3339()
+                )?;
+            }
+        }
+        if !self.table_properties.is_empty() {
+            self.table_properties
+                .iter()
+                .enumerate()
+                .try_for_each(|(i, (k, v))| {
+                    if i == 0 {
+                        writeln!(
+                            f,
+                            " {:<20} {:>52}",
+                            "Table Properties",
+                            format!("{}: {}", k, v)
+                        )
+                    } else {
+                        writeln!(f, " {:<20} {:>52}", "", format!("{}: {}", k, v))
+                    }
+                })?;
+        } else {
+            writeln!(f, " {:<20} {:>52}", "Table Properties", "None")?;
+        }
+
+        // File Statistics
+        let file_stats = &self.file_stats;
+        let total_size_mb = file_stats.total_size_bytes as f64 / (1024.0 * 1024.0);
+        let avg_size_mb = file_stats.avg_file_size_bytes / (1024.0 * 1024.0);
+        let min_size_kb = file_stats.min_file_size_bytes as f64 / 1024.0;
+        let max_size_mb = file_stats.max_file_size_bytes as f64 / (1024.0 * 1024.0);
+
+        writeln!(f, " File Statistics")?;
+        writeln!(f, "   {:<38} {:>32}", "Files", file_stats.num_files)?;
+        writeln!(
+            f,
+            "   {:<38} {:>32}",
+            "Total Size",
+            format!("{:.2} MB", total_size_mb)
+        )?;
+        writeln!(
+            f,
+            "   {:<38} {:>32}",
+            "Avg Size",
+            format!("{:.2} MB", avg_size_mb)
+        )?;
+        writeln!(
+            f,
+            "   {:<38} {:>32}",
+            "Min Size",
+            format!("{:.2} KB", min_size_kb)
+        )?;
+        writeln!(
+            f,
+            "   {:<38} {:>32}",
+            "Max Size",
+            format!("{:.2} MB", max_size_mb)
+        )?;
+        writeln!(
+            f,
+            "   {:<38} {:>32}",
+            "Files with Deletion Vectors", file_stats.files_with_deletion_vectors
+        )?;
+
+        // Partition Info
+        let partition_info = &self.partition_info;
+        writeln!(f, " Partition Info")?;
+        writeln!(
+            f,
+            "   {:<38} {:>32}",
+            "Partition Columns", partition_info.num_partition_columns
+        )?;
+        if !partition_info.partition_columns.is_empty() {
+            writeln!(
+                f,
+                "   {:<38} {:>32}",
+                "Column Names",
+                partition_info.partition_columns.join(", ")
+            )?;
+        }
+        if let Some(count) = partition_info.estimated_partition_count {
+            writeln!(f, "   {:<38} {:>32}", "Estimated Partitions", count)?;
+        }
+
+        Ok(())
     }
 }
 
@@ -673,5 +820,72 @@ mod tests {
         assert_eq!(stats.num_files, usize::MAX);
         assert_eq!(stats.total_size_bytes, u64::MAX);
         assert_eq!(stats.max_file_size_bytes, u64::MAX);
+    }
+
+    #[test]
+    fn test_delta_metrics_display() {
+        let mut metrics = DeltaMetrics::new();
+        metrics.version = 5;
+        metrics.protocol.min_reader_version = 1;
+        metrics.protocol.min_writer_version = 2;
+        metrics.protocol.reader_features = Some(vec!["deletionVectors".to_string()]);
+        metrics.protocol.writer_features = Some(vec!["deletionVectors".to_string()]);
+        metrics.metadata.id = "test-table-id".to_string();
+        metrics.metadata.name = Some("test_table".to_string());
+        metrics.metadata.description = Some("A test table".to_string());
+        metrics.metadata.field_count = 10;
+        metrics.metadata.partition_columns = vec!["date".to_string()];
+        metrics.metadata.created_time = Some(1700000000000);
+        metrics
+            .table_properties
+            .insert("delta.minReaderVersion".to_string(), "1".to_string());
+        metrics.file_stats = FileStatistics {
+            num_files: 100,
+            total_size_bytes: 1024 * 1024 * 500,
+            avg_file_size_bytes: 1024.0 * 1024.0 * 5.0,
+            min_file_size_bytes: 1024,
+            max_file_size_bytes: 1024 * 1024 * 10,
+            files_with_deletion_vectors: 5,
+        };
+        metrics.partition_info = PartitionMetrics {
+            num_partition_columns: 1,
+            partition_columns: vec!["date".to_string()],
+            estimated_partition_count: Some(30),
+        };
+
+        let display = format!("{}", metrics);
+
+        assert!(display.contains("Delta Specific Metrics"));
+        assert!(display.contains("Version"));
+        assert!(display.contains("5"));
+        assert!(display.contains("Min Reader Version"));
+        assert!(display.contains("Min Writer Version"));
+        assert!(display.contains("test-table-id"));
+        assert!(display.contains("test_table"));
+        assert!(display.contains("File Statistics"));
+        assert!(display.contains("100"));
+        assert!(display.contains("Partition Info"));
+        assert!(display.contains("Table Properties"));
+    }
+
+    #[test]
+    fn test_delta_metrics_display_minimal() {
+        let metrics = DeltaMetrics::new();
+        let display = format!("{}", metrics);
+
+        assert!(display.contains("Delta Specific Metrics"));
+        assert!(display.contains("Version"));
+        assert!(display.contains("File Statistics"));
+    }
+
+    #[test]
+    fn test_delta_metrics_display_no_table_properties() {
+        let mut metrics = DeltaMetrics::new();
+        metrics.version = 1;
+
+        let display = format!("{}", metrics);
+
+        assert!(display.contains("Table Properties"));
+        assert!(display.contains("None"));
     }
 }

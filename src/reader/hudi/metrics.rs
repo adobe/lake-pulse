@@ -13,6 +13,7 @@
 
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use std::fmt::{Display, Formatter, Result as FmtResult};
 
 /// Apache Hudi specific metrics extracted from table metadata
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -249,6 +250,191 @@ impl TimelineMetrics {
             earliest_commit_timestamp: None,
             pending_compactions: 0,
         }
+    }
+}
+
+impl Display for HudiMetrics {
+    fn fmt(&self, f: &mut Formatter<'_>) -> FmtResult {
+        writeln!(f)?;
+        writeln!(f, " Hudi Specific Metrics")?;
+        writeln!(f, "{}", "━".repeat(80))?;
+
+        // Basic info
+        writeln!(f, " {:<40} {:>32}", "Table Type", &self.table_type)?;
+        if !self.table_name.is_empty() {
+            writeln!(f, " {:<40} {:>32}", "Table Name", &self.table_name)?;
+        }
+
+        // Metadata
+        writeln!(
+            f,
+            " {:<40} {:>32}",
+            "Field Count", self.metadata.field_count
+        )?;
+        if !self.metadata.partition_columns.is_empty() {
+            writeln!(
+                f,
+                " {:<40} {:>32}",
+                "Partition Columns",
+                self.metadata.partition_columns.join(", ")
+            )?;
+        }
+        writeln!(
+            f,
+            " {:<40} {:>32}",
+            "Format Provider", &self.metadata.format_provider
+        )?;
+
+        // Table Properties
+        if !self.table_properties.is_empty() {
+            self.table_properties
+                .iter()
+                .enumerate()
+                .try_for_each(|(i, (k, v))| {
+                    if i == 0 {
+                        writeln!(
+                            f,
+                            " {:<20} {:>52}",
+                            "Table Properties",
+                            format!("{}: {}", k, v)
+                        )
+                    } else {
+                        writeln!(f, " {:<20} {:>52}", "", format!("{}: {}", k, v))
+                    }
+                })?;
+        }
+
+        // File Statistics
+        let file_stats = &self.file_stats;
+        let total_size_mb = file_stats.total_size_bytes as f64 / (1024.0 * 1024.0);
+        let avg_size_mb = file_stats.avg_file_size_bytes / (1024.0 * 1024.0);
+        let min_size_kb = file_stats.min_file_size_bytes as f64 / 1024.0;
+        let max_size_mb = file_stats.max_file_size_bytes as f64 / (1024.0 * 1024.0);
+
+        writeln!(f, " File Statistics")?;
+        writeln!(f, "   {:<38} {:>32}", "Files", file_stats.num_files)?;
+        writeln!(
+            f,
+            "   {:<38} {:>32}",
+            "Total Size",
+            format!("{:.2} MB", total_size_mb)
+        )?;
+        writeln!(
+            f,
+            "   {:<38} {:>32}",
+            "Avg Size",
+            format!("{:.2} MB", avg_size_mb)
+        )?;
+        writeln!(
+            f,
+            "   {:<38} {:>32}",
+            "Min Size",
+            format!("{:.2} KB", min_size_kb)
+        )?;
+        writeln!(
+            f,
+            "   {:<38} {:>32}",
+            "Max Size",
+            format!("{:.2} MB", max_size_mb)
+        )?;
+        if file_stats.num_log_files > 0 {
+            let log_size_mb = file_stats.total_log_size_bytes as f64 / (1024.0 * 1024.0);
+            writeln!(f, "   {:<38} {:>32}", "Log Files", file_stats.num_log_files)?;
+            writeln!(
+                f,
+                "   {:<38} {:>32}",
+                "Total Log Size",
+                format!("{:.2} MB", log_size_mb)
+            )?;
+        }
+
+        // Partition Info
+        let partition_info = &self.partition_info;
+        writeln!(f, " Partition Info")?;
+        writeln!(
+            f,
+            "   {:<38} {:>32}",
+            "Partition Columns", partition_info.num_partition_columns
+        )?;
+        writeln!(
+            f,
+            "   {:<38} {:>32}",
+            "Number of Partitions", partition_info.num_partitions
+        )?;
+        if partition_info.num_partitions > 0 {
+            let largest_mb = partition_info.largest_partition_size_bytes as f64 / (1024.0 * 1024.0);
+            let smallest_kb = partition_info.smallest_partition_size_bytes as f64 / 1024.0;
+            let avg_mb = partition_info.avg_partition_size_bytes / (1024.0 * 1024.0);
+            writeln!(
+                f,
+                "   {:<38} {:>32}",
+                "Largest Partition",
+                format!("{:.2} MB", largest_mb)
+            )?;
+            writeln!(
+                f,
+                "   {:<38} {:>32}",
+                "Smallest Partition",
+                format!("{:.2} KB", smallest_kb)
+            )?;
+            writeln!(
+                f,
+                "   {:<38} {:>32}",
+                "Avg Partition Size",
+                format!("{:.2} MB", avg_mb)
+            )?;
+        }
+
+        // Timeline Info
+        let timeline = &self.timeline_info;
+        writeln!(f, " Timeline Info")?;
+        writeln!(
+            f,
+            "   {:<38} {:>32}",
+            "Total Commits", timeline.total_commits
+        )?;
+        if timeline.total_delta_commits > 0 {
+            writeln!(
+                f,
+                "   {:<38} {:>32}",
+                "Delta Commits", timeline.total_delta_commits
+            )?;
+        }
+        if timeline.total_compactions > 0 {
+            writeln!(
+                f,
+                "   {:<38} {:>32}",
+                "Compactions", timeline.total_compactions
+            )?;
+        }
+        if timeline.total_cleans > 0 {
+            writeln!(f, "   {:<38} {:>32}", "Cleans", timeline.total_cleans)?;
+        }
+        if timeline.total_rollbacks > 0 {
+            writeln!(f, "   {:<38} {:>32}", "Rollbacks", timeline.total_rollbacks)?;
+        }
+        if timeline.total_savepoints > 0 {
+            writeln!(
+                f,
+                "   {:<38} {:>32}",
+                "Savepoints", timeline.total_savepoints
+            )?;
+        }
+        if let Some(ref ts) = timeline.latest_commit_timestamp {
+            writeln!(f, "   {:<38} {:>32}", "Latest Commit", ts)?;
+        }
+        if let Some(ref ts) = timeline.earliest_commit_timestamp {
+            writeln!(f, "   {:<38} {:>32}", "Earliest Commit", ts)?;
+        }
+        if timeline.pending_compactions > 0 {
+            writeln!(
+                f,
+                "   {:<38} {:>32}",
+                "Pending Compactions", timeline.pending_compactions
+            )?;
+        }
+
+        Ok(())
     }
 }
 
@@ -897,5 +1083,106 @@ mod tests {
             metrics.table_properties.get("hoodie.table.type"),
             Some(&"COPY_ON_WRITE".to_string())
         );
+    }
+
+    #[test]
+    fn test_hudi_metrics_display() {
+        let mut metrics = HudiMetrics::new();
+        metrics.table_type = "COPY_ON_WRITE".to_string();
+        metrics.table_name = "test_hudi_table".to_string();
+        metrics.metadata.name = "test_hudi_table".to_string();
+        metrics.metadata.base_path = "/path/to/table".to_string();
+        metrics.metadata.field_count = 10;
+        metrics.metadata.partition_columns = vec!["date".to_string()];
+        metrics.metadata.created_time = Some(1700000000000);
+        metrics
+            .table_properties
+            .insert("hoodie.table.name".to_string(), "test".to_string());
+        metrics.file_stats = FileStatistics {
+            num_files: 100,
+            total_size_bytes: 1024 * 1024 * 500,
+            avg_file_size_bytes: 1024.0 * 1024.0 * 5.0,
+            min_file_size_bytes: 1024,
+            max_file_size_bytes: 1024 * 1024 * 10,
+            num_log_files: 20,
+            total_log_size_bytes: 1024 * 1024 * 50,
+        };
+        metrics.partition_info = PartitionMetrics {
+            num_partition_columns: 1,
+            num_partitions: 30,
+            partition_paths: vec!["date=2023-11-01".to_string()],
+            largest_partition_size_bytes: 1024 * 1024 * 100,
+            smallest_partition_size_bytes: 1024 * 1024,
+            avg_partition_size_bytes: 1024.0 * 1024.0 * 50.0,
+        };
+        metrics.timeline_info = TimelineMetrics {
+            total_commits: 100,
+            total_delta_commits: 50,
+            total_compactions: 10,
+            total_cleans: 5,
+            total_rollbacks: 2,
+            total_savepoints: 1,
+            latest_commit_timestamp: Some("20231114221320".to_string()),
+            earliest_commit_timestamp: Some("20231101000000".to_string()),
+            pending_compactions: 0,
+        };
+
+        let display = format!("{}", metrics);
+
+        assert!(display.contains("Hudi Specific Metrics"));
+        assert!(display.contains("Table Type"));
+        assert!(display.contains("COPY_ON_WRITE"));
+        assert!(display.contains("test_hudi_table"));
+        assert!(display.contains("File Statistics"));
+        assert!(display.contains("100"));
+        assert!(display.contains("Log Files"));
+        assert!(display.contains("Partition Info"));
+        assert!(display.contains("Timeline Info"));
+        assert!(display.contains("Total Commits"));
+        assert!(display.contains("Table Properties"));
+    }
+
+    #[test]
+    fn test_hudi_metrics_display_minimal() {
+        let metrics = HudiMetrics::new();
+        let display = format!("{}", metrics);
+
+        assert!(display.contains("Hudi Specific Metrics"));
+        assert!(display.contains("Table Type"));
+        assert!(display.contains("File Statistics"));
+    }
+
+    #[test]
+    fn test_hudi_metrics_display_mor_table() {
+        let mut metrics = HudiMetrics::new();
+        metrics.table_type = "MERGE_ON_READ".to_string();
+        metrics.file_stats.num_log_files = 50;
+        metrics.file_stats.total_log_size_bytes = 1024 * 1024 * 100;
+
+        let display = format!("{}", metrics);
+
+        assert!(display.contains("MERGE_ON_READ"));
+        assert!(display.contains("Log Files"));
+        assert!(display.contains("Total Log Size"));
+    }
+
+    #[test]
+    fn test_hudi_metrics_display_timeline_details() {
+        let mut metrics = HudiMetrics::new();
+        metrics.timeline_info.total_commits = 100;
+        metrics.timeline_info.total_delta_commits = 50;
+        metrics.timeline_info.total_compactions = 10;
+        metrics.timeline_info.total_cleans = 5;
+        metrics.timeline_info.total_rollbacks = 2;
+        metrics.timeline_info.total_savepoints = 1;
+
+        let display = format!("{}", metrics);
+
+        assert!(display.contains("Total Commits"));
+        assert!(display.contains("Delta Commits"));
+        assert!(display.contains("Compactions"));
+        assert!(display.contains("Cleans"));
+        assert!(display.contains("Rollbacks"));
+        assert!(display.contains("Savepoints"));
     }
 }
