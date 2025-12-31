@@ -15,9 +15,10 @@ use crate::reader::delta::metrics::DeltaMetrics;
 #[cfg(feature = "hudi")]
 use crate::reader::hudi::metrics::HudiMetrics;
 use crate::reader::iceberg::metrics::IcebergMetrics;
+#[cfg(feature = "lance")]
+use crate::reader::lance::metrics::LanceMetrics;
 use crate::util::ascii_gantt::to_ascii_gantt;
 use crate::util::ascii_gantt::GanttConfig;
-use chrono::DateTime;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Error as JsonError};
 use std::collections::{HashMap, LinkedList};
@@ -217,6 +218,9 @@ pub struct HealthMetrics {
     pub hudi_table_specific_metrics: Option<HudiMetrics>,
     /// Apache Iceberg specific metrics
     pub iceberg_table_specific_metrics: Option<IcebergMetrics>,
+    /// Lance specific metrics (requires `lance` feature)
+    #[cfg(feature = "lance")]
+    pub lance_table_specific_metrics: Option<LanceMetrics>,
 }
 
 /// Distribution of files by size category.
@@ -1079,169 +1083,20 @@ impl Display for HealthReport {
             }
         }
 
-        // Delta Specific Metrics (full width)
+        // Format-Specific Metrics
         if let Some(ref delta_metrics) = report.metrics.delta_table_specific_metrics {
-            writeln!(f)?;
-            writeln!(f, " Delta Specific Metrics")?;
-            writeln!(f, "{}", "━".repeat(80))?;
-            writeln!(
-                f,
-                " {:<40} {:>32}",
-                "Version",
-                format!("{}", delta_metrics.version)
-            )?;
-            writeln!(
-                f,
-                " {:<40} {:>32}",
-                "Min Reader Version",
-                format!("{}", delta_metrics.protocol.min_reader_version)
-            )?;
-            writeln!(
-                f,
-                " {:<40} {:>32}",
-                "Min Writer Version",
-                format!("{}", delta_metrics.protocol.min_writer_version)
-            )?;
-            writeln!(
-                f,
-                " {:<40} {:>32}",
-                "Reader Features",
-                format!("{:?}", delta_metrics.protocol.reader_features)
-            )?;
-            writeln!(
-                f,
-                " {:<40} {:>32}",
-                "Writer Features",
-                format!("{:?}", delta_metrics.protocol.writer_features)
-            )?;
-            writeln!(
-                f,
-                " {:<31}  {:>40}",
-                "Table ID",
-                format!("{}", delta_metrics.metadata.id)
-            )?;
-            writeln!(
-                f,
-                " {:<40} {:>32}",
-                "Table Name",
-                format!("{:?}", delta_metrics.metadata.name)
-            )?;
-            writeln!(
-                f,
-                " {:<40} {:>32}",
-                "Table Description",
-                format!("{:?}", delta_metrics.metadata.description)
-            )?;
-            writeln!(
-                f,
-                " {:<40} {:>32}",
-                "Field Count",
-                format!("{}", delta_metrics.metadata.field_count)
-            )?;
-            writeln!(
-                f,
-                " {:<40} {:>32}",
-                "Partition Columns",
-                format!("{:?}", delta_metrics.metadata.partition_columns)
-            )?;
-            if let Some(created_time) = delta_metrics.metadata.created_time {
-                if let Some(created_datetime) = DateTime::from_timestamp(created_time / 1000, 0) {
-                    writeln!(
-                        f,
-                        " {:<40} {:>32}",
-                        "Created Time",
-                        created_datetime.to_rfc3339()
-                    )?;
-                }
-            }
-            let tbl_props = delta_metrics.table_properties.clone();
-            if !tbl_props.is_empty() {
-                tbl_props.iter().enumerate().try_for_each(|(i, (k, v))| {
-                    if i == 0 {
-                        writeln!(
-                            f,
-                            " {:<20} {:>52}",
-                            "Table Properties",
-                            format!("{}: {}", k, v)
-                        )
-                    } else {
-                        writeln!(f, " {:<20} {:>52}", "", format!("{}: {}", k, v))
-                    }
-                })?;
-            } else {
-                writeln!(f, " {:<20} {:>52}", "Table Properties", "None")?
-            }
-
-            // File Statistics - formatted nicely
-            let file_stats = &delta_metrics.file_stats;
-            let total_size_mb = file_stats.total_size_bytes as f64 / (1024.0 * 1024.0);
-            let avg_size_mb = file_stats.avg_file_size_bytes / (1024.0 * 1024.0);
-            let min_size_kb = file_stats.min_file_size_bytes as f64 / 1024.0;
-            let max_size_mb = file_stats.max_file_size_bytes as f64 / (1024.0 * 1024.0);
-
-            writeln!(f, " File Statistics")?;
-            writeln!(
-                f,
-                "   {:<38} {:>32}",
-                "Files",
-                format!("{}", file_stats.num_files)
-            )?;
-            writeln!(
-                f,
-                "   {:<38} {:>32}",
-                "Total Size",
-                format!("{:.2} MB", total_size_mb)
-            )?;
-            writeln!(
-                f,
-                "   {:<38} {:>32}",
-                "Avg Size",
-                format!("{:.2} MB", avg_size_mb)
-            )?;
-            writeln!(
-                f,
-                "   {:<38} {:>32}",
-                "Min Size",
-                format!("{:.2} KB", min_size_kb)
-            )?;
-            writeln!(
-                f,
-                "   {:<38} {:>32}",
-                "Max Size",
-                format!("{:.2} MB", max_size_mb)
-            )?;
-            writeln!(
-                f,
-                "   {:<38} {:>32}",
-                "Files with Deletion Vectors",
-                format!("{}", file_stats.files_with_deletion_vectors)
-            )?;
-
-            // Partition Info - formatted nicely
-            let partition_info = &delta_metrics.partition_info;
-            writeln!(f, " Partition Info")?;
-            writeln!(
-                f,
-                "   {:<38} {:>32}",
-                "Partition Columns",
-                format!("{}", partition_info.num_partition_columns)
-            )?;
-            if !partition_info.partition_columns.is_empty() {
-                writeln!(
-                    f,
-                    "   {:<38} {:>32}",
-                    "Column Names",
-                    partition_info.partition_columns.join(", ")
-                )?;
-            }
-            if let Some(count) = partition_info.estimated_partition_count {
-                writeln!(
-                    f,
-                    "   {:<38} {:>32}",
-                    "Estimated Partitions",
-                    format!("{}", count)
-                )?;
-            }
+            write!(f, "{}", delta_metrics)?;
+        }
+        if let Some(ref iceberg_metrics) = report.metrics.iceberg_table_specific_metrics {
+            write!(f, "{}", iceberg_metrics)?;
+        }
+        #[cfg(feature = "hudi")]
+        if let Some(ref hudi_metrics) = report.metrics.hudi_table_specific_metrics {
+            write!(f, "{}", hudi_metrics)?;
+        }
+        #[cfg(feature = "lance")]
+        if let Some(ref lance_metrics) = report.metrics.lance_table_specific_metrics {
+            write!(f, "{}", lance_metrics)?;
         }
 
         // Recommendations (full width)
@@ -1335,6 +1190,8 @@ impl HealthMetrics {
             #[cfg(feature = "hudi")]
             hudi_table_specific_metrics: None,
             iceberg_table_specific_metrics: None,
+            #[cfg(feature = "lance")]
+            lance_table_specific_metrics: None,
         }
     }
 
@@ -3662,5 +3519,84 @@ mod tests {
         assert!(display.contains("45.5 days"));
         assert!(display.contains("Newest Snapshot"));
         assert!(display.contains("0.5 days"));
+    }
+
+    #[cfg(feature = "hudi")]
+    #[test]
+    fn test_health_report_display_with_hudi_metrics() {
+        use crate::reader::hudi::metrics::{
+            FileStatistics, HudiMetrics, PartitionMetrics, TableMetadata, TimelineMetrics,
+        };
+
+        let mut metrics = HealthMetrics::new();
+        metrics.total_files = 100;
+        metrics.hudi_table_specific_metrics = Some(HudiMetrics {
+            table_type: "COPY_ON_WRITE".to_string(),
+            table_name: "test_hudi_table".to_string(),
+            metadata: TableMetadata {
+                name: "test_hudi_table".to_string(),
+                base_path: "/data/hudi/test_table".to_string(),
+                schema_string: "{}".to_string(),
+                field_count: 10,
+                partition_columns: vec!["date".to_string()],
+                created_time: Some(1700000000000),
+                format_provider: "parquet".to_string(),
+                format_options: std::collections::HashMap::new(),
+            },
+            table_properties: {
+                let mut props = std::collections::HashMap::new();
+                props.insert("hoodie.table.name".to_string(), "test".to_string());
+                props
+            },
+            file_stats: FileStatistics {
+                num_files: 50,
+                total_size_bytes: 1024 * 1024 * 100,
+                avg_file_size_bytes: 1024.0 * 1024.0 * 2.0,
+                min_file_size_bytes: 1024,
+                max_file_size_bytes: 1024 * 1024 * 10,
+                num_log_files: 10,
+                total_log_size_bytes: 1024 * 1024 * 20,
+            },
+            partition_info: PartitionMetrics {
+                num_partition_columns: 1,
+                num_partitions: 30,
+                partition_paths: vec!["date=2024-01-01".to_string()],
+                largest_partition_size_bytes: 1024 * 1024 * 50,
+                smallest_partition_size_bytes: 1024 * 1024,
+                avg_partition_size_bytes: 1024.0 * 1024.0 * 25.0,
+            },
+            timeline_info: TimelineMetrics {
+                total_commits: 100,
+                total_delta_commits: 0,
+                total_compactions: 5,
+                total_cleans: 10,
+                total_rollbacks: 2,
+                total_savepoints: 1,
+                latest_commit_timestamp: Some("20240101120000000".to_string()),
+                earliest_commit_timestamp: Some("20231201000000000".to_string()),
+                pending_compactions: 0,
+            },
+        });
+
+        let report = HealthReport {
+            table_path: "/data/hudi/test_table".to_string(),
+            table_type: "hudi".to_string(),
+            analysis_timestamp: "2024-01-01T00:00:00Z".to_string(),
+            metrics,
+            health_score: 0.85,
+            timed_metrics: TimedLikeMetrics {
+                duration_collection: LinkedList::new(),
+            },
+        };
+
+        let display = format!("{}", report);
+
+        // Verify Hudi-specific metrics are displayed
+        assert!(display.contains("Hudi Specific Metrics"));
+        assert!(display.contains("COPY_ON_WRITE"));
+        assert!(display.contains("test_hudi_table"));
+        assert!(display.contains("File Statistics"));
+        assert!(display.contains("Timeline Info"));
+        assert!(display.contains("Total Commits"));
     }
 }

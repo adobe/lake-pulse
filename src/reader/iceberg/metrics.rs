@@ -11,8 +11,10 @@
 // specific language governing permissions and limitations under
 // each license.
 
+use chrono::DateTime;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use std::fmt::{Display, Formatter, Result as FmtResult};
 
 /// Iceberg table specific metrics extracted from table metadata
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -328,6 +330,234 @@ impl IcebergMetrics {
 impl Default for IcebergMetrics {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+impl Display for IcebergMetrics {
+    fn fmt(&self, f: &mut Formatter<'_>) -> FmtResult {
+        writeln!(f)?;
+        writeln!(f, " Iceberg Specific Metrics")?;
+        writeln!(f, "{}", "━".repeat(80))?;
+
+        // Basic info
+        writeln!(f, " {:<40} {:>32}", "Format Version", self.format_version)?;
+        if !self.table_uuid.is_empty() {
+            writeln!(f, " {:<31}  {:>40}", "Table UUID", &self.table_uuid)?;
+        }
+        if let Some(snapshot_id) = self.current_snapshot_id {
+            writeln!(f, " {:<40} {:>32}", "Current Snapshot ID", snapshot_id)?;
+        }
+
+        // Metadata
+        if let Some(last_updated) = self.metadata.last_updated_ms {
+            if let Some(dt) = DateTime::from_timestamp_millis(last_updated) {
+                writeln!(f, " {:<40} {:>32}", "Last Updated", dt.to_rfc3339())?;
+            }
+        }
+        writeln!(
+            f,
+            " {:<40} {:>32}",
+            "Schema Count", self.metadata.schema_count
+        )?;
+        writeln!(
+            f,
+            " {:<40} {:>32}",
+            "Partition Spec Count", self.metadata.partition_spec_count
+        )?;
+        writeln!(
+            f,
+            " {:<40} {:>32}",
+            "Sort Order Count", self.metadata.sort_order_count
+        )?;
+        if let Some(seq) = self.metadata.last_sequence_number {
+            writeln!(f, " {:<40} {:>32}", "Last Sequence Number", seq)?;
+        }
+
+        // Table Properties
+        if !self.table_properties.is_empty() {
+            self.table_properties
+                .iter()
+                .enumerate()
+                .try_for_each(|(i, (k, v))| {
+                    if i == 0 {
+                        writeln!(
+                            f,
+                            " {:<20} {:>52}",
+                            "Table Properties",
+                            format!("{}: {}", k, v)
+                        )
+                    } else {
+                        writeln!(f, " {:<20} {:>52}", "", format!("{}: {}", k, v))
+                    }
+                })?;
+        }
+
+        // Snapshot Info
+        writeln!(f, " Snapshot Info")?;
+        writeln!(
+            f,
+            "   {:<38} {:>32}",
+            "Total Snapshots", self.snapshot_info.total_snapshots
+        )?;
+        if let Some(op) = &self.snapshot_info.operation {
+            writeln!(f, "   {:<38} {:>32}", "Last Operation", op)?;
+        }
+        if let Some(ts) = self.snapshot_info.current_snapshot_timestamp_ms {
+            if let Some(dt) = DateTime::from_timestamp_millis(ts) {
+                writeln!(f, "   {:<38} {:>32}", "Snapshot Time", dt.to_rfc3339())?;
+            }
+        }
+
+        // Schema Info
+        writeln!(f, " Schema Info")?;
+        writeln!(
+            f,
+            "   {:<38} {:>32}",
+            "Schema ID", self.schema_info.schema_id
+        )?;
+        writeln!(
+            f,
+            "   {:<38} {:>32}",
+            "Field Count", self.schema_info.field_count
+        )?;
+        writeln!(
+            f,
+            "   {:<38} {:>32}",
+            "Required Fields", self.schema_info.required_field_count
+        )?;
+        writeln!(
+            f,
+            "   {:<38} {:>32}",
+            "Optional Fields", self.schema_info.optional_field_count
+        )?;
+        writeln!(
+            f,
+            "   {:<38} {:>32}",
+            "Nested Fields", self.schema_info.nested_field_count
+        )?;
+
+        // Partition Spec
+        writeln!(f, " Partition Spec")?;
+        writeln!(
+            f,
+            "   {:<38} {:>32}",
+            "Is Partitioned",
+            if self.partition_spec.is_partitioned {
+                "Yes"
+            } else {
+                "No"
+            }
+        )?;
+        if self.partition_spec.is_partitioned {
+            writeln!(
+                f,
+                "   {:<38} {:>32}",
+                "Partition Fields", self.partition_spec.partition_field_count
+            )?;
+            if !self.partition_spec.partition_fields.is_empty() {
+                writeln!(
+                    f,
+                    "   {:<38} {:>32}",
+                    "Field Names",
+                    self.partition_spec.partition_fields.join(", ")
+                )?;
+            }
+            if !self.partition_spec.partition_transforms.is_empty() {
+                writeln!(
+                    f,
+                    "   {:<38} {:>32}",
+                    "Transforms",
+                    self.partition_spec.partition_transforms.join(", ")
+                )?;
+            }
+        }
+
+        // Sort Order
+        if self.sort_order.is_sorted {
+            writeln!(f, " Sort Order")?;
+            writeln!(
+                f,
+                "   {:<38} {:>32}",
+                "Sort Fields", self.sort_order.sort_field_count
+            )?;
+            if !self.sort_order.sort_fields.is_empty() {
+                writeln!(
+                    f,
+                    "   {:<38} {:>32}",
+                    "Field Names",
+                    self.sort_order.sort_fields.join(", ")
+                )?;
+            }
+        }
+
+        // File Statistics
+        let file_stats = &self.file_stats;
+        let total_size_mb = file_stats.total_data_size_bytes as f64 / (1024.0 * 1024.0);
+        let avg_size_mb = file_stats.avg_data_file_size_bytes / (1024.0 * 1024.0);
+
+        writeln!(f, " File Statistics")?;
+        writeln!(
+            f,
+            "   {:<38} {:>32}",
+            "Data Files", file_stats.num_data_files
+        )?;
+        writeln!(
+            f,
+            "   {:<38} {:>32}",
+            "Total Data Size",
+            format!("{:.2} MB", total_size_mb)
+        )?;
+        writeln!(
+            f,
+            "   {:<38} {:>32}",
+            "Avg Data File Size",
+            format!("{:.2} MB", avg_size_mb)
+        )?;
+        if let Some(records) = file_stats.total_records {
+            writeln!(f, "   {:<38} {:>32}", "Total Records", records)?;
+        }
+        if file_stats.num_delete_files > 0 {
+            writeln!(
+                f,
+                "   {:<38} {:>32}",
+                "Delete Files", file_stats.num_delete_files
+            )?;
+            writeln!(
+                f,
+                "   {:<38} {:>32}",
+                "Position Delete Files", file_stats.num_position_delete_files
+            )?;
+            writeln!(
+                f,
+                "   {:<38} {:>32}",
+                "Equality Delete Files", file_stats.num_equality_delete_files
+            )?;
+        }
+
+        // Manifest Statistics
+        writeln!(f, " Manifest Statistics")?;
+        writeln!(
+            f,
+            "   {:<38} {:>32}",
+            "Manifest Files", self.manifest_stats.num_manifest_files
+        )?;
+        writeln!(
+            f,
+            "   {:<38} {:>32}",
+            "Data Manifests", self.manifest_stats.num_data_manifests
+        )?;
+        writeln!(
+            f,
+            "   {:<38} {:>32}",
+            "Delete Manifests", self.manifest_stats.num_delete_manifests
+        )?;
+        writeln!(
+            f,
+            "   {:<38} {:>32}",
+            "Manifest Lists", self.manifest_stats.num_manifest_lists
+        )?;
+
+        Ok(())
     }
 }
 
@@ -647,5 +877,122 @@ mod tests {
         let debug_str = format!("{:?}", metrics);
         assert!(!debug_str.is_empty());
         assert!(debug_str.contains("IcebergMetrics"));
+    }
+
+    #[test]
+    fn test_iceberg_metrics_display() {
+        let mut metrics = IcebergMetrics::new();
+        metrics.format_version = 2;
+        metrics.table_uuid = "test-uuid-12345".to_string();
+        metrics.current_snapshot_id = Some(123456789);
+        metrics.snapshot_info = SnapshotMetrics {
+            total_snapshots: 5,
+            current_snapshot_id: Some(123456789),
+            current_snapshot_timestamp_ms: Some(1700000000000),
+            parent_snapshot_id: Some(123456788),
+            operation: Some("append".to_string()),
+            summary: HashMap::new(),
+            manifest_list: Some("/path/to/manifest".to_string()),
+            schema_id: Some(1),
+            sequence_number: Some(10),
+        };
+        metrics.schema_info = SchemaMetrics {
+            schema_id: 1,
+            field_count: 10,
+            schema_string: String::new(),
+            field_names: vec!["id".to_string(), "name".to_string()],
+            required_field_count: 5,
+            optional_field_count: 5,
+            nested_field_count: 2,
+        };
+        metrics.partition_spec = PartitionSpecMetrics {
+            spec_id: 0,
+            partition_field_count: 1,
+            partition_fields: vec!["date".to_string()],
+            partition_transforms: vec!["day".to_string()],
+            is_partitioned: true,
+            estimated_partition_count: Some(30),
+        };
+        metrics.sort_order = SortOrderMetrics {
+            order_id: 0,
+            sort_field_count: 1,
+            sort_fields: vec!["timestamp".to_string()],
+            sort_directions: vec!["asc".to_string()],
+            null_orders: vec!["nulls-first".to_string()],
+            is_sorted: true,
+        };
+        metrics.file_stats = FileStatistics {
+            num_data_files: 100,
+            total_data_size_bytes: 1024 * 1024 * 500,
+            avg_data_file_size_bytes: 1024.0 * 1024.0 * 5.0,
+            min_data_file_size_bytes: 1024,
+            max_data_file_size_bytes: 1024 * 1024 * 10,
+            total_records: Some(1000000),
+            num_delete_files: 5,
+            total_delete_size_bytes: 1024 * 100,
+            num_position_delete_files: 3,
+            num_equality_delete_files: 2,
+        };
+        metrics.manifest_stats = ManifestStatistics {
+            num_manifest_files: 10,
+            total_manifest_size_bytes: 1024 * 1024,
+            avg_manifest_file_size_bytes: 1024.0 * 100.0,
+            num_data_manifests: 8,
+            num_delete_manifests: 2,
+            num_manifest_lists: 5,
+            total_manifest_list_size_bytes: 1024 * 50,
+        };
+        metrics
+            .table_properties
+            .insert("write.format.default".to_string(), "parquet".to_string());
+
+        let display = format!("{}", metrics);
+
+        assert!(display.contains("Iceberg Specific Metrics"));
+        assert!(display.contains("Format Version"));
+        assert!(display.contains("2"));
+        assert!(display.contains("test-uuid-12345"));
+        assert!(display.contains("Snapshot Info"));
+        assert!(display.contains("Schema Info"));
+        assert!(display.contains("Partition Spec"));
+        assert!(display.contains("Sort Order"));
+        assert!(display.contains("File Statistics"));
+        assert!(display.contains("Manifest Statistics"));
+        assert!(display.contains("Table Properties"));
+    }
+
+    #[test]
+    fn test_iceberg_metrics_display_minimal() {
+        let metrics = IcebergMetrics::new();
+        let display = format!("{}", metrics);
+
+        assert!(display.contains("Iceberg Specific Metrics"));
+        assert!(display.contains("Format Version"));
+        assert!(display.contains("File Statistics"));
+    }
+
+    #[test]
+    fn test_iceberg_metrics_display_not_partitioned() {
+        let mut metrics = IcebergMetrics::new();
+        metrics.partition_spec.is_partitioned = false;
+
+        let display = format!("{}", metrics);
+
+        assert!(display.contains("Is Partitioned"));
+        assert!(display.contains("No"));
+    }
+
+    #[test]
+    fn test_iceberg_metrics_display_with_deletes() {
+        let mut metrics = IcebergMetrics::new();
+        metrics.file_stats.num_delete_files = 10;
+        metrics.file_stats.num_position_delete_files = 6;
+        metrics.file_stats.num_equality_delete_files = 4;
+
+        let display = format!("{}", metrics);
+
+        assert!(display.contains("Delete Files"));
+        assert!(display.contains("Position Delete Files"));
+        assert!(display.contains("Equality Delete Files"));
     }
 }

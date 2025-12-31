@@ -810,6 +810,23 @@ hoodie.table.base.file.format=PARQUET
             HudiActionType::from("rollback"),
             HudiActionType::Rollback
         ));
+        assert!(matches!(
+            HudiActionType::from("savepoint"),
+            HudiActionType::Savepoint
+        ));
+        assert!(matches!(
+            HudiActionType::from("replacecommit"),
+            HudiActionType::ReplaceCommit
+        ));
+        assert!(matches!(
+            HudiActionType::from("indexing"),
+            HudiActionType::Indexing
+        ));
+        // Test unknown action type
+        match HudiActionType::from("unknown_action") {
+            HudiActionType::Unknown(s) => assert_eq!(s, "unknown_action"),
+            _ => panic!("Expected Unknown variant"),
+        }
     }
 
     #[test]
@@ -850,6 +867,137 @@ hoodie.table.base.file.format=PARQUET
         assert_eq!(metadata.total_bytes_written(), 1000);
         assert_eq!(metadata.get_file_paths(), vec!["file1.parquet".to_string()]);
         assert!(metadata.get_schema().is_some());
+    }
+
+    #[test]
+    fn test_hoodie_commit_metadata_log_files() {
+        let json = r#"{
+            "partitionToWriteStats": {
+                "date=2024-01-01": [{
+                    "fileId": "file1",
+                    "path": "date=2024-01-01/file1.parquet",
+                    "numWrites": 50,
+                    "totalLogFilesSize": 5000,
+                    "totalLogBlocks": 2,
+                    "totalLogRecords": 100
+                }],
+                "date=2024-01-02": [{
+                    "fileId": "file2",
+                    "path": "date=2024-01-02/file2.parquet",
+                    "numWrites": 75,
+                    "totalLogFilesSize": 3000
+                }]
+            }
+        }"#;
+
+        let metadata: HoodieCommitMetadata = serde_json::from_str(json).unwrap();
+        assert_eq!(metadata.total_log_size(), 8000);
+        assert_eq!(metadata.total_log_files(), 2);
+        let partition_paths = metadata.get_partition_paths();
+        assert_eq!(partition_paths.len(), 2);
+        assert!(partition_paths.contains(&"date=2024-01-01".to_string()));
+        assert!(partition_paths.contains(&"date=2024-01-02".to_string()));
+    }
+
+    #[test]
+    fn test_hoodie_commit_metadata_empty() {
+        let metadata = HoodieCommitMetadata::default();
+        assert_eq!(metadata.total_records_written(), 0);
+        assert_eq!(metadata.total_deletes(), 0);
+        assert_eq!(metadata.total_bytes_written(), 0);
+        assert_eq!(metadata.total_log_size(), 0);
+        assert_eq!(metadata.total_log_files(), 0);
+        assert!(metadata.get_file_paths().is_empty());
+        assert!(metadata.get_partition_paths().is_empty());
+        assert!(metadata.get_schema().is_none());
+    }
+
+    #[test]
+    fn test_hoodie_commit_metadata_no_schema() {
+        let json = r#"{
+            "partitionToWriteStats": {
+                "": [{
+                    "fileId": "file1",
+                    "path": "file1.parquet",
+                    "numWrites": 10
+                }]
+            }
+        }"#;
+
+        let metadata: HoodieCommitMetadata = serde_json::from_str(json).unwrap();
+        assert!(metadata.get_schema().is_none());
+    }
+
+    #[test]
+    fn test_parse_timeline_filename_requested_state() {
+        let action = parse_timeline_filename("20251110222213846.compaction.requested").unwrap();
+        assert_eq!(action.timestamp, "20251110222213846");
+        assert!(matches!(action.action_type, HudiActionType::Compaction));
+        assert!(matches!(action.state, HudiActionState::Requested));
+    }
+
+    #[test]
+    fn test_parse_timeline_filename_various_actions() {
+        // Test savepoint
+        let action = parse_timeline_filename("20251110222213846.savepoint").unwrap();
+        assert!(matches!(action.action_type, HudiActionType::Savepoint));
+
+        // Test replacecommit
+        let action = parse_timeline_filename("20251110222213846.replacecommit").unwrap();
+        assert!(matches!(action.action_type, HudiActionType::ReplaceCommit));
+
+        // Test indexing
+        let action = parse_timeline_filename("20251110222213846.indexing").unwrap();
+        assert!(matches!(action.action_type, HudiActionType::Indexing));
+
+        // Test clean
+        let action = parse_timeline_filename("20251110222213846.clean").unwrap();
+        assert!(matches!(action.action_type, HudiActionType::Clean));
+    }
+
+    #[test]
+    fn test_hudi_timestamp_to_millis_no_millis() {
+        // Timestamp without milliseconds portion
+        let ts = hudi_timestamp_to_millis("20251110222213");
+        assert!(ts > 0);
+    }
+
+    #[test]
+    fn test_hudi_timestamp_to_millis_invalid() {
+        // Invalid timestamp format
+        let ts = hudi_timestamp_to_millis("invalid_timestamp");
+        assert_eq!(ts, 0);
+    }
+
+    #[test]
+    fn test_hoodie_properties_parse_empty() {
+        let props = HoodieProperties::parse("");
+        assert_eq!(props.table_name, "");
+        assert_eq!(props.table_type, HudiTableType::CopyOnWrite);
+        assert_eq!(props.table_version, 0);
+    }
+
+    #[test]
+    fn test_hoodie_properties_parse_with_comments() {
+        let content = r#"
+# This is a comment
+hoodie.table.name=my_table
+# Another comment
+hoodie.table.type=MERGE_ON_READ
+"#;
+        let props = HoodieProperties::parse(content);
+        assert_eq!(props.table_name, "my_table");
+        assert_eq!(props.table_type, HudiTableType::MergeOnRead);
+    }
+
+    #[test]
+    fn test_hoodie_properties_parse_empty_partition_fields() {
+        let content = r#"
+hoodie.table.name=test
+hoodie.table.partition.fields=
+"#;
+        let props = HoodieProperties::parse(content);
+        assert!(props.partition_fields.is_empty());
     }
 
     #[tokio::test]
