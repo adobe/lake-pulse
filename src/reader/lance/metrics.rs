@@ -36,6 +36,10 @@ pub struct LanceMetrics {
 
     /// Index information
     pub index_info: IndexMetrics,
+
+    /// Operation metrics derived from version history
+    #[serde(default)]
+    pub operation_metrics: Option<OperationMetrics>,
 }
 
 /// Lance table metadata
@@ -126,6 +130,37 @@ pub struct IndexMetrics {
     pub total_index_size_bytes: u64,
 }
 
+/// Operation-level metrics derived from version history
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct OperationMetrics {
+    /// Total number of operations (versions)
+    pub total_operations: usize,
+
+    /// Number of append operations (row count increased, no deletions)
+    pub append_count: usize,
+
+    /// Number of delete operations (deletions increased)
+    pub delete_count: usize,
+
+    /// Number of overwrite operations (fragment count changed significantly)
+    pub overwrite_count: usize,
+
+    /// Number of compaction operations (fragment count decreased, row count same)
+    pub compaction_count: usize,
+
+    /// Number of index operations (index count changed)
+    pub index_operation_count: usize,
+
+    /// Total bytes written across all operations
+    pub total_bytes_written: u64,
+
+    /// Average operations per day
+    pub operations_per_day: f64,
+
+    /// Distribution of operation types as percentages
+    pub operation_distribution: HashMap<String, f64>,
+}
+
 impl Default for LanceMetrics {
     fn default() -> Self {
         Self {
@@ -163,6 +198,7 @@ impl Default for LanceMetrics {
                 index_types: Vec::new(),
                 total_index_size_bytes: 0,
             },
+            operation_metrics: None,
         }
     }
 }
@@ -408,6 +444,7 @@ mod tests {
                 index_types: vec!["IVF_PQ".to_string()],
                 total_index_size_bytes: 1024 * 1024 * 50,
             },
+            operation_metrics: None,
         };
 
         let display = format!("{}", metrics);

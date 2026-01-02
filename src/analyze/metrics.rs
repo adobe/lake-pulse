@@ -1573,6 +1573,44 @@ impl HealthMetrics {
                 );
             }
         }
+
+        // Check Lance-specific index recommendations
+        #[cfg(feature = "lance")]
+        if let Some(ref lance_metrics) = self.lance_table_specific_metrics {
+            let index_info = &lance_metrics.index_info;
+
+            // Recommend creating indices for large tables without any indices
+            if index_info.num_indices == 0 {
+                if let Some(num_rows) = lance_metrics.metadata.num_rows {
+                    if num_rows > 10_000 {
+                        self.recommendations.push(
+                            "No indices found on Lance table. Consider creating vector or scalar indices for frequently queried columns.".to_string()
+                        );
+                    }
+                }
+            }
+
+            // Check for tables with many fragments that could benefit from indexing
+            if lance_metrics.fragment_info.num_fragments > 100 && index_info.num_indices == 0 {
+                self.recommendations.push(
+                    "Large number of fragments detected without indices. Consider creating indices to improve query performance.".to_string()
+                );
+            }
+
+            // Check for high deletion ratio that might affect index performance
+            if let Some(num_deleted) = lance_metrics.metadata.num_deleted_rows {
+                if let Some(num_rows) = lance_metrics.metadata.num_rows {
+                    if num_rows > 0 {
+                        let deletion_ratio = num_deleted as f64 / (num_rows + num_deleted) as f64;
+                        if deletion_ratio > 0.2 && index_info.num_indices > 0 {
+                            self.recommendations.push(
+                                "High deletion ratio detected with existing indices. Consider rebuilding indices after compaction.".to_string()
+                            );
+                        }
+                    }
+                }
+            }
+        }
     }
 }
 
@@ -3598,5 +3636,234 @@ mod tests {
         assert!(display.contains("File Statistics"));
         assert!(display.contains("Timeline Info"));
         assert!(display.contains("Total Commits"));
+    }
+
+    #[cfg(feature = "lance")]
+    #[test]
+    fn test_generate_recommendations_lance_no_indices_large_table() {
+        use crate::reader::lance::metrics::{
+            FileStatistics, FragmentMetrics, IndexMetrics, LanceMetrics, TableMetadata,
+        };
+
+        let mut metrics = HealthMetrics::new();
+        metrics.lance_table_specific_metrics = Some(LanceMetrics {
+            version: 1,
+            metadata: TableMetadata {
+                uuid: "test-uuid".to_string(),
+                schema_string: String::new(),
+                field_count: 5,
+                created_time: None,
+                last_modified_time: None,
+                num_rows: Some(50_000), // > 10,000 rows
+                num_deleted_rows: None,
+            },
+            table_properties: std::collections::HashMap::new(),
+            file_stats: FileStatistics {
+                num_data_files: 10,
+                num_deletion_files: 0,
+                total_data_size_bytes: 1024 * 1024 * 100,
+                total_deletion_size_bytes: 0,
+                avg_data_file_size_bytes: 1024.0 * 1024.0 * 10.0,
+                min_data_file_size_bytes: 1024 * 1024,
+                max_data_file_size_bytes: 1024 * 1024 * 20,
+            },
+            fragment_info: FragmentMetrics {
+                num_fragments: 10,
+                num_fragments_with_deletions: 0,
+                avg_rows_per_fragment: 5000.0,
+                min_rows_per_fragment: 1000,
+                max_rows_per_fragment: 10000,
+                total_physical_rows: 50000,
+            },
+            index_info: IndexMetrics {
+                num_indices: 0, // No indices
+                indexed_columns: vec![],
+                index_types: vec![],
+                total_index_size_bytes: 0,
+            },
+            operation_metrics: None,
+        });
+
+        metrics.generate_recommendations();
+
+        assert!(metrics
+            .recommendations
+            .iter()
+            .any(|r| r.contains("No indices found on Lance table")));
+    }
+
+    #[cfg(feature = "lance")]
+    #[test]
+    fn test_generate_recommendations_lance_many_fragments_no_indices() {
+        use crate::reader::lance::metrics::{
+            FileStatistics, FragmentMetrics, IndexMetrics, LanceMetrics, TableMetadata,
+        };
+
+        let mut metrics = HealthMetrics::new();
+        metrics.lance_table_specific_metrics = Some(LanceMetrics {
+            version: 1,
+            metadata: TableMetadata {
+                uuid: "test-uuid".to_string(),
+                schema_string: String::new(),
+                field_count: 5,
+                created_time: None,
+                last_modified_time: None,
+                num_rows: Some(5_000), // Small table
+                num_deleted_rows: None,
+            },
+            table_properties: std::collections::HashMap::new(),
+            file_stats: FileStatistics {
+                num_data_files: 150,
+                num_deletion_files: 0,
+                total_data_size_bytes: 1024 * 1024 * 100,
+                total_deletion_size_bytes: 0,
+                avg_data_file_size_bytes: 1024.0 * 1024.0,
+                min_data_file_size_bytes: 1024,
+                max_data_file_size_bytes: 1024 * 1024 * 5,
+            },
+            fragment_info: FragmentMetrics {
+                num_fragments: 150, // > 100 fragments
+                num_fragments_with_deletions: 0,
+                avg_rows_per_fragment: 33.0,
+                min_rows_per_fragment: 10,
+                max_rows_per_fragment: 100,
+                total_physical_rows: 5000,
+            },
+            index_info: IndexMetrics {
+                num_indices: 0, // No indices
+                indexed_columns: vec![],
+                index_types: vec![],
+                total_index_size_bytes: 0,
+            },
+            operation_metrics: None,
+        });
+
+        metrics.generate_recommendations();
+
+        assert!(metrics
+            .recommendations
+            .iter()
+            .any(|r| r.contains("Large number of fragments")));
+    }
+
+    #[cfg(feature = "lance")]
+    #[test]
+    fn test_generate_recommendations_lance_high_deletion_ratio_with_indices() {
+        use crate::reader::lance::metrics::{
+            FileStatistics, FragmentMetrics, IndexMetrics, LanceMetrics, TableMetadata,
+        };
+
+        let mut metrics = HealthMetrics::new();
+        metrics.lance_table_specific_metrics = Some(LanceMetrics {
+            version: 1,
+            metadata: TableMetadata {
+                uuid: "test-uuid".to_string(),
+                schema_string: String::new(),
+                field_count: 5,
+                created_time: None,
+                last_modified_time: None,
+                num_rows: Some(8_000),
+                num_deleted_rows: Some(3_000), // 3000 / (8000 + 3000) = 27% > 20%
+            },
+            table_properties: std::collections::HashMap::new(),
+            file_stats: FileStatistics {
+                num_data_files: 10,
+                num_deletion_files: 5,
+                total_data_size_bytes: 1024 * 1024 * 100,
+                total_deletion_size_bytes: 1024 * 100,
+                avg_data_file_size_bytes: 1024.0 * 1024.0 * 10.0,
+                min_data_file_size_bytes: 1024 * 1024,
+                max_data_file_size_bytes: 1024 * 1024 * 20,
+            },
+            fragment_info: FragmentMetrics {
+                num_fragments: 10,
+                num_fragments_with_deletions: 5,
+                avg_rows_per_fragment: 800.0,
+                min_rows_per_fragment: 500,
+                max_rows_per_fragment: 1500,
+                total_physical_rows: 11000,
+            },
+            index_info: IndexMetrics {
+                num_indices: 2, // Has indices
+                indexed_columns: vec!["id".to_string(), "embedding".to_string()],
+                index_types: vec!["IVF_PQ".to_string()],
+                total_index_size_bytes: 1024 * 1024 * 10,
+            },
+            operation_metrics: None,
+        });
+
+        metrics.generate_recommendations();
+
+        assert!(metrics
+            .recommendations
+            .iter()
+            .any(|r| r.contains("High deletion ratio") && r.contains("rebuilding indices")));
+    }
+
+    #[cfg(feature = "lance")]
+    #[test]
+    fn test_health_report_display_with_lance_metrics() {
+        use crate::reader::lance::metrics::{
+            FileStatistics, FragmentMetrics, IndexMetrics, LanceMetrics, TableMetadata,
+        };
+
+        let mut metrics = HealthMetrics::new();
+        metrics.lance_table_specific_metrics = Some(LanceMetrics {
+            version: 5,
+            metadata: TableMetadata {
+                uuid: "test-lance-uuid".to_string(),
+                schema_string: String::new(),
+                field_count: 10,
+                created_time: None,
+                last_modified_time: None,
+                num_rows: Some(100_000),
+                num_deleted_rows: Some(500),
+            },
+            table_properties: std::collections::HashMap::new(),
+            file_stats: FileStatistics {
+                num_data_files: 50,
+                num_deletion_files: 5,
+                total_data_size_bytes: 1024 * 1024 * 500,
+                total_deletion_size_bytes: 1024 * 100,
+                avg_data_file_size_bytes: 1024.0 * 1024.0 * 10.0,
+                min_data_file_size_bytes: 1024 * 1024,
+                max_data_file_size_bytes: 1024 * 1024 * 50,
+            },
+            fragment_info: FragmentMetrics {
+                num_fragments: 50,
+                num_fragments_with_deletions: 5,
+                avg_rows_per_fragment: 2000.0,
+                min_rows_per_fragment: 500,
+                max_rows_per_fragment: 5000,
+                total_physical_rows: 100500,
+            },
+            index_info: IndexMetrics {
+                num_indices: 2,
+                indexed_columns: vec!["id".to_string(), "embedding".to_string()],
+                index_types: vec!["IVF_PQ".to_string()],
+                total_index_size_bytes: 1024 * 1024 * 50,
+            },
+            operation_metrics: None,
+        });
+
+        let report = HealthReport {
+            table_path: "/data/lance/test_table.lance".to_string(),
+            table_type: "lance".to_string(),
+            analysis_timestamp: "2024-01-01T00:00:00Z".to_string(),
+            metrics,
+            health_score: 0.90,
+            timed_metrics: TimedLikeMetrics {
+                duration_collection: LinkedList::new(),
+            },
+        };
+
+        let display = format!("{}", report);
+
+        // Verify Lance-specific metrics are displayed
+        assert!(display.contains("Lance Specific Metrics"));
+        assert!(display.contains("test-lance-uuid"));
+        assert!(display.contains("File Statistics"));
+        assert!(display.contains("Fragment Info"));
+        assert!(display.contains("Index Info"));
     }
 }
