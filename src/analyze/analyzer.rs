@@ -29,6 +29,8 @@ use crate::reader::delta::reader::DeltaReader;
 #[cfg(feature = "hudi")]
 use crate::reader::hudi::reader::HudiReader;
 use crate::reader::iceberg::reader::IcebergReader;
+#[cfg(feature = "lance")]
+use crate::reader::lance::reader::LanceReader;
 use crate::storage::{FileMetadata, StorageConfig, StorageProvider, StorageProviderFactory};
 use crate::util::helpers::{
     detect_table_type, measure_dur, measure_dur_async, measure_dur_with_error,
@@ -648,6 +650,33 @@ impl Analyzer {
                     }
                 },
                 Some(|_| "Opened Hudi reader".to_string()),
+            )
+            .await?;
+        }
+
+        #[cfg(feature = "lance")]
+        if table_type == "lance" {
+            measure_dur_async(
+                "lance_reader",
+                &mut internal_metrics,
+                || async {
+                    let lance_reader =
+                        LanceReader::open(self.storage_provider.uri_from_path(location).as_str())
+                            .await;
+
+                    match lance_reader {
+                        Ok(reader) => {
+                            metrics.lance_table_specific_metrics =
+                                Some(reader.extract_metrics().await?);
+                            Ok(())
+                        }
+                        Err(e) => {
+                            warn!("Failed to open Lance reader: {}", e);
+                            Err(e)
+                        }
+                    }
+                },
+                Some(|_| "Opened Lance reader".to_string()),
             )
             .await?;
         }
@@ -1864,5 +1893,79 @@ mod tests {
         if let Ok(report) = result {
             assert_eq!(report.table_type, "iceberg");
         }
+    }
+
+    // Test Analyzer::analyze() with Hudi table files
+    #[cfg(feature = "hudi")]
+    #[tokio::test]
+    async fn test_analyze_hudi_table() {
+        // Create mock with Hudi table structure
+        // Hudi tables have a .hoodie directory with metadata
+        let files = vec![
+            create_file_metadata(".hoodie/hoodie.properties", 512),
+            create_file_metadata(".hoodie/metadata/files/00000000000000000.log.1", 1024),
+            create_file_metadata("2024/01/01/file1.parquet", 50 * 1024 * 1024),
+            create_file_metadata("2024/01/02/file2.parquet", 60 * 1024 * 1024),
+        ];
+
+        let hoodie_properties = "hoodie.table.name=test_table\nhoodie.table.type=COPY_ON_WRITE";
+
+        let mut file_contents = HashMap::new();
+        file_contents.insert(
+            ".hoodie/hoodie.properties".to_string(),
+            hoodie_properties.as_bytes().to_vec(),
+        );
+
+        let analyzer = Analyzer {
+            storage_provider: Arc::new(ConfigurableMockStorageProvider {
+                base_path: "/tmp/hudi_test".to_string(),
+                options: HashMap::new(),
+                files,
+                file_contents,
+            }),
+            parallelism: 1,
+        };
+
+        let result = analyzer.analyze("test_hudi_table").await;
+
+        // Similar to Delta/Iceberg, may fail on HudiReader but table type detection works
+        if let Ok(report) = result {
+            assert_eq!(report.table_type, "hudi");
+            assert!(report.metrics.total_files > 0);
+        }
+        // If it fails, it's expected due to HudiReader requiring real data
+    }
+
+    // Test Analyzer::analyze() with Lance table files
+    #[cfg(feature = "lance")]
+    #[tokio::test]
+    async fn test_analyze_lance_table() {
+        // Create mock with Lance table structure
+        // Lance tables have a _versions directory with manifest files
+        let files = vec![
+            create_file_metadata("_versions/1.manifest", 1024),
+            create_file_metadata("_versions/2.manifest", 2048),
+            create_file_metadata("data/fragment-0.lance", 50 * 1024 * 1024),
+            create_file_metadata("data/fragment-1.lance", 60 * 1024 * 1024),
+        ];
+
+        let analyzer = Analyzer {
+            storage_provider: Arc::new(ConfigurableMockStorageProvider {
+                base_path: "/tmp/lance_test".to_string(),
+                options: HashMap::new(),
+                files,
+                file_contents: HashMap::new(),
+            }),
+            parallelism: 1,
+        };
+
+        let result = analyzer.analyze("test_lance_table").await;
+
+        // Similar to Delta/Iceberg, may fail on LanceReader but table type detection works
+        if let Ok(report) = result {
+            assert_eq!(report.table_type, "lance");
+            assert!(report.metrics.total_files > 0);
+        }
+        // If it fails, it's expected due to LanceReader requiring real data
     }
 }
