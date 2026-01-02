@@ -29,6 +29,8 @@ use crate::reader::delta::reader::DeltaReader;
 #[cfg(feature = "hudi")]
 use crate::reader::hudi::reader::HudiReader;
 use crate::reader::iceberg::reader::IcebergReader;
+#[cfg(feature = "lance")]
+use crate::reader::lance::reader::LanceReader;
 use crate::storage::{FileMetadata, StorageConfig, StorageProvider, StorageProviderFactory};
 use crate::util::helpers::{
     detect_table_type, measure_dur, measure_dur_async, measure_dur_with_error,
@@ -648,6 +650,33 @@ impl Analyzer {
                     }
                 },
                 Some(|_| "Opened Hudi reader".to_string()),
+            )
+            .await?;
+        }
+
+        #[cfg(feature = "lance")]
+        if table_type == "lance" {
+            measure_dur_async(
+                "lance_reader",
+                &mut internal_metrics,
+                || async {
+                    let lance_reader =
+                        LanceReader::open(self.storage_provider.uri_from_path(location).as_str())
+                            .await;
+
+                    match lance_reader {
+                        Ok(reader) => {
+                            metrics.lance_table_specific_metrics =
+                                Some(reader.extract_metrics().await?);
+                            Ok(())
+                        }
+                        Err(e) => {
+                            warn!("Failed to open Lance reader: {}", e);
+                            Err(e)
+                        }
+                    }
+                },
+                Some(|_| "Opened Lance reader".to_string()),
             )
             .await?;
         }
