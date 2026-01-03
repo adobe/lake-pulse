@@ -1573,6 +1573,44 @@ impl HealthMetrics {
                 );
             }
         }
+
+        // Check Lance-specific index recommendations
+        #[cfg(feature = "lance")]
+        if let Some(ref lance_metrics) = self.lance_table_specific_metrics {
+            let index_info = &lance_metrics.index_info;
+
+            // Recommend creating indices for large tables without any indices
+            if index_info.num_indices == 0 {
+                if let Some(num_rows) = lance_metrics.metadata.num_rows {
+                    if num_rows > 10_000 {
+                        self.recommendations.push(
+                            "No indices found on Lance table. Consider creating vector or scalar indices for frequently queried columns.".to_string()
+                        );
+                    }
+                }
+            }
+
+            // Check for tables with many fragments that could benefit from indexing
+            if lance_metrics.fragment_info.num_fragments > 100 && index_info.num_indices == 0 {
+                self.recommendations.push(
+                    "Large number of fragments detected without indices. Consider creating indices to improve query performance.".to_string()
+                );
+            }
+
+            // Check for high deletion ratio that might affect index performance
+            if let Some(num_deleted) = lance_metrics.metadata.num_deleted_rows {
+                if let Some(num_rows) = lance_metrics.metadata.num_rows {
+                    if num_rows > 0 {
+                        let deletion_ratio = num_deleted as f64 / (num_rows + num_deleted) as f64;
+                        if deletion_ratio > 0.2 && index_info.num_indices > 0 {
+                            self.recommendations.push(
+                                "High deletion ratio detected with existing indices. Consider rebuilding indices after compaction.".to_string()
+                            );
+                        }
+                    }
+                }
+            }
+        }
     }
 }
 
