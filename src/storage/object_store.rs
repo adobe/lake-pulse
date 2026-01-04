@@ -20,7 +20,7 @@ use bytes::Bytes;
 use futures::stream::StreamExt;
 use object_store::{
     aws::AmazonS3Builder, azure::MicrosoftAzureBuilder, gcp::GoogleCloudStorageBuilder,
-    local::LocalFileSystem, ClientOptions, ObjectStore, RetryConfig,
+    local::LocalFileSystem, ClientOptions, ObjectStore, ObjectStoreExt, RetryConfig,
 };
 use std::collections::HashMap;
 use std::fmt::{Debug, Formatter};

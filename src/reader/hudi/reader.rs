@@ -16,7 +16,7 @@ use super::metrics::{
 };
 use chrono::NaiveDateTime;
 use object_store::path::Path;
-use object_store::ObjectStore;
+use object_store::{ObjectStore, ObjectStoreExt};
 use serde::Deserialize;
 use std::collections::HashMap;
 use std::error::Error;
