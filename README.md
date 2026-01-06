@@ -8,14 +8,14 @@
 
 [ci-badge]: https://github.com/adobe/lake-pulse/actions/workflows/ci.yml/badge.svg
 [ci-link]: https://github.com/adobe/lake-pulse/actions/workflows/ci.yml
-[crates-badge]: https://img.shields.io/crates/v/lake_pulse.svg
-[crates-link]: https://crates.io/crates/lake_pulse
+[crates-badge]: https://img.shields.io/crates/v/lake-pulse.svg
+[crates-link]: https://crates.io/crates/lake-pulse
 [coverage-badge]: https://codecov.io/gh/adobe/lake-pulse/graph/badge.svg?token=3mH5uUJ6se
 [coverage-link]: https://codecov.io/gh/adobe/lake-pulse
 [license-badge]: https://img.shields.io/badge/license-MIT_or_Apache--2.0-blue
 [license-link]: ./LICENSE-APACHE
-[docs-badge]: https://docs.rs/lake_pulse/badge.svg
-[docs-link]: https://docs.rs/lake_pulse
+[docs-badge]: https://docs.rs/lake-pulse/badge.svg
+[docs-link]: https://docs.rs/lake-pulse
 
 ![Lake Pulse Logo](./lake-pulse-logo.svg)
 
@@ -87,7 +87,7 @@ By default, Lake Pulse includes support for **Delta Lake** and **Apache Iceberg*
 |---------|-------------|
 | `hudi` | Enables Apache Hudi support |
 | `lance` | Enables Lance support |
-| `experimental` | Enables both `hudi` and `lance` |
+| `all` | Enables all table formats (`hudi` + `lance`) |
 
 ### Usage
 
@@ -103,8 +103,8 @@ lake-pulse = { version = "0.1", features = ["hudi"] }
 # With Lance support
 lake-pulse = { version = "0.1", features = ["lance"] }
 
-# With all experimental formats (Hudi + Lance)
-lake-pulse = { version = "0.1", features = ["experimental"] }
+# With all table formats (Delta + Iceberg + Hudi + Lance)
+lake-pulse = { version = "0.1", features = ["all"] }
 ```
 
 ## Storage Configuration

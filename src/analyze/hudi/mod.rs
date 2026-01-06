@@ -59,11 +59,11 @@
 //!
 //! ## Feature Flag
 //!
-//! This module requires the `hudi` feature flag (part of the `experimental` feature set):
+//! This module requires the `hudi` feature flag:
 //!
 //! ```toml
 //! [dependencies]
-//! lake-pulse = { version = "0.1", features = ["experimental"] }
+//! lake-pulse = { version = "0.1", features = ["hudi"] }
 //! ```
 
 pub mod analyze;

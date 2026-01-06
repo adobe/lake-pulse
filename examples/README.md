@@ -38,6 +38,6 @@ To run these examples, use the `--features` flag:
 cargo run --features hudi --example local_store_hudi
 cargo run --features lance --example local_store_lance
 
-# Or use the experimental feature to enable both:
-cargo run --features experimental --example local_store_hudi
+# Or use the all feature to enable all table formats:
+cargo run --features all --example local_store_hudi
 ```

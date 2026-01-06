@@ -47,11 +47,11 @@
 //!
 //! ## Feature Flag
 //!
-//! Requires the `hudi` feature (part of `experimental`):
+//! Requires the `hudi` feature:
 //!
 //! ```toml
 //! [dependencies]
-//! lake-pulse = { version = "0.1", features = ["experimental"] }
+//! lake-pulse = { version = "0.1", features = ["hudi"] }
 //! ```
 
 pub mod metrics;
