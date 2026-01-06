@@ -129,8 +129,13 @@ impl LanceAnalyzer {
             if obj.path.ends_with(".lance") {
                 // .lance files are data files
                 data_files.push(obj);
-            } else if obj.path.contains("/_versions/") || obj.path.contains("/_indices/") {
+            } else if obj.path.contains("/_versions/")
+                || obj.path.contains("/_indices/")
+                || obj.path.starts_with("_versions/")
+                || obj.path.starts_with("_indices/")
+            {
                 // Version manifests and index files are metadata
+                // Handle both absolute paths (/_versions/) and relative paths (_versions/)
                 metadata_files.push(obj);
             } else if obj.path.ends_with(".manifest") || obj.path.ends_with(".txn") {
                 // Manifest and transaction files
@@ -594,9 +599,10 @@ impl LanceAnalyzer {
         info!("Updating metrics from Lance metadata");
 
         // Count version files to determine snapshot count
+        // Handle both absolute paths (/_versions/) and relative paths (_versions/)
         let version_files: Vec<&FileMetadata> = metadata_files
             .iter()
-            .filter(|f| f.path.contains("/_versions/"))
+            .filter(|f| f.path.contains("/_versions/") || f.path.starts_with("_versions/"))
             .collect();
 
         let total_snapshots = version_files.len();
@@ -647,11 +653,18 @@ impl LanceAnalyzer {
 
         // Schema evolution metrics - analyze version history
         // Extract table path from version files
+        // Handle both absolute paths (/_versions/) and relative paths (_versions/)
         let table_uri = version_files.first().and_then(|f| {
-            f.path.find("/_versions/").map(|pos| {
+            if let Some(pos) = f.path.find("/_versions/") {
+                // Absolute path: extract everything before /_versions/
                 let table_path = &f.path[..pos];
-                self.storage_provider.uri_from_path(table_path)
-            })
+                Some(self.storage_provider.uri_from_path(table_path))
+            } else if f.path.starts_with("_versions/") {
+                // Relative path from table root: use empty path (table root)
+                Some(self.storage_provider.uri_from_path(""))
+            } else {
+                None
+            }
         });
 
         let (schema_changes, current_version) = if let Some(ref uri) = table_uri {
@@ -744,7 +757,11 @@ impl LanceAnalyzer {
             deletion_vector_impact_score: deletion_impact_score,
         });
 
-        // Table constraints - Lance doesn't have explicit constraints like Delta
+        // Table constraints metrics - Lance does not have built-in constraint support
+        // Lance is optimized for vector search and ML workloads, not traditional OLTP constraints.
+        // Data validation is typically handled at the application layer or via Arrow schema.
+        // We set data_quality_score to 1.0 (no constraint violations possible) and
+        // constraint_coverage_score to 0.0 (no constraints defined) to reflect this.
         metrics.table_constraints = Some(TableConstraintsMetrics {
             total_constraints: 0,
             check_constraints: 0,
@@ -756,13 +773,70 @@ impl LanceAnalyzer {
             constraint_coverage_score: 0.0,
         });
 
-        // Clustering info - Lance uses fragments which are similar to clustering
-        metrics.clustering = Some(ClusteringInfo {
-            clustering_columns: Vec::new(),
-            cluster_count: 0,
-            avg_files_per_cluster: 0.0,
-            avg_cluster_size_bytes: 0.0,
-        });
+        // Clustering info - Lance uses fragments which are similar to clusters
+        // Each fragment groups related data files together
+        let clustering_info = if let Some(ref uri) = table_uri {
+            match Dataset::open(uri).await {
+                Ok(dataset) => {
+                    let manifest = dataset.manifest();
+                    let fragments = &manifest.fragments;
+                    let num_fragments = fragments.len();
+
+                    if num_fragments > 0 {
+                        // Count total data files across all fragments
+                        let total_data_files: usize = fragments.iter().map(|f| f.files.len()).sum();
+                        let avg_files_per_fragment = total_data_files as f64 / num_fragments as f64;
+
+                        // Calculate total size across all fragments
+                        let total_fragment_size: u64 = fragments
+                            .iter()
+                            .flat_map(|f| f.files.iter())
+                            .filter_map(|df| df.file_size_bytes.get())
+                            .map(u64::from)
+                            .sum();
+                        let avg_fragment_size = total_fragment_size as f64 / num_fragments as f64;
+
+                        info!(
+                            "Lance clustering: fragments={}, files={}, avg_files_per_fragment={:.2}",
+                            num_fragments, total_data_files, avg_files_per_fragment
+                        );
+
+                        ClusteringInfo {
+                            // Lance doesn't have explicit clustering columns like Delta/Iceberg
+                            // but fragments serve as the clustering mechanism
+                            clustering_columns: Vec::new(),
+                            cluster_count: num_fragments,
+                            avg_files_per_cluster: avg_files_per_fragment,
+                            avg_cluster_size_bytes: avg_fragment_size,
+                        }
+                    } else {
+                        ClusteringInfo {
+                            clustering_columns: Vec::new(),
+                            cluster_count: 0,
+                            avg_files_per_cluster: 0.0,
+                            avg_cluster_size_bytes: 0.0,
+                        }
+                    }
+                }
+                Err(e) => {
+                    warn!("Failed to open Lance dataset for clustering info: {}", e);
+                    ClusteringInfo {
+                        clustering_columns: Vec::new(),
+                        cluster_count: 0,
+                        avg_files_per_cluster: 0.0,
+                        avg_cluster_size_bytes: 0.0,
+                    }
+                }
+            }
+        } else {
+            ClusteringInfo {
+                clustering_columns: Vec::new(),
+                cluster_count: 0,
+                avg_files_per_cluster: 0.0,
+                avg_cluster_size_bytes: 0.0,
+            }
+        };
+        metrics.clustering = Some(clustering_info);
 
         // Initialize file_compaction with placeholder values. The actual metrics
         // are calculated later by `TableAnalyzer::analyze_file_compaction()` which
@@ -1720,6 +1794,147 @@ mod tests {
             assert!(
                 result.is_ok(),
                 "update_metrics_from_metadata should succeed"
+            );
+        }
+
+        #[tokio::test]
+        async fn test_lance_metrics_schema_json_format() {
+            let analyzer = create_integration_analyzer().await;
+
+            let files = analyzer
+                .storage_provider
+                .list_files("", true)
+                .await
+                .expect("Failed to list files");
+
+            let (data_files, metadata_files) =
+                <LanceAnalyzer as TableAnalyzer>::categorize_files(&analyzer, files);
+
+            let mut metrics = HealthMetrics::default();
+            let total_size: u64 = data_files.iter().map(|f| f.size).sum();
+
+            let _ = analyzer
+                .update_metrics_from_lance_metadata(
+                    &metadata_files,
+                    total_size,
+                    data_files.len(),
+                    &mut metrics,
+                )
+                .await;
+
+            // If we have Lance metrics, verify schema is valid JSON
+            if let Some(ref lance_metrics) = metrics.lance_table_specific_metrics {
+                if !lance_metrics.metadata.schema_string.is_empty() {
+                    let schema_result: Result<serde_json::Value, _> =
+                        serde_json::from_str(&lance_metrics.metadata.schema_string);
+                    assert!(
+                        schema_result.is_ok(),
+                        "Schema string should be valid JSON: {}",
+                        lance_metrics.metadata.schema_string
+                    );
+                }
+            }
+        }
+
+        #[tokio::test]
+        async fn test_lance_file_statistics_accuracy() {
+            let analyzer = create_integration_analyzer().await;
+
+            let files = analyzer
+                .storage_provider
+                .list_files("", true)
+                .await
+                .expect("Failed to list files");
+
+            let (data_files, metadata_files) =
+                <LanceAnalyzer as TableAnalyzer>::categorize_files(&analyzer, files);
+
+            let mut metrics = HealthMetrics::default();
+            let total_size: u64 = data_files.iter().map(|f| f.size).sum();
+
+            let _ = analyzer
+                .update_metrics_from_lance_metadata(
+                    &metadata_files,
+                    total_size,
+                    data_files.len(),
+                    &mut metrics,
+                )
+                .await;
+
+            // If we have Lance metrics, verify file statistics are reasonable
+            if let Some(ref lance_metrics) = metrics.lance_table_specific_metrics {
+                let file_stats = &lance_metrics.file_stats;
+
+                // If we have data files, sizes should be non-zero
+                if file_stats.num_data_files > 0 {
+                    assert!(
+                        file_stats.total_data_size_bytes > 0,
+                        "Total data size should be > 0 when we have data files"
+                    );
+
+                    // Min should be <= max
+                    assert!(
+                        file_stats.min_data_file_size_bytes <= file_stats.max_data_file_size_bytes,
+                        "Min file size should be <= max file size"
+                    );
+                }
+            }
+        }
+
+        #[tokio::test]
+        async fn test_lance_clustering_info_from_fragments() {
+            let analyzer = create_integration_analyzer().await;
+
+            // List files from the table (empty path since storage is configured with table path)
+            let files = analyzer
+                .storage_provider
+                .list_files("", true)
+                .await
+                .expect("Failed to list files");
+
+            let (data_files, metadata_files) = analyzer.categorize_lance_files(files);
+
+            let data_files_total_size: u64 = data_files.iter().map(|f| f.size).sum();
+            let data_files_total_files = data_files.len();
+
+            let mut metrics = HealthMetrics::default();
+            analyzer
+                .update_metrics_from_lance_metadata(
+                    &metadata_files,
+                    data_files_total_size,
+                    data_files_total_files,
+                    &mut metrics,
+                )
+                .await
+                .expect("Failed to update metrics");
+
+            // Verify clustering info is populated from fragments
+            let clustering = metrics.clustering.expect("Clustering info should be set");
+
+            // Lance dataset should have at least one fragment
+            assert!(
+                clustering.cluster_count > 0,
+                "Cluster count should be > 0 (fragments exist)"
+            );
+
+            // Average files per cluster should be reasonable
+            assert!(
+                clustering.avg_files_per_cluster > 0.0,
+                "Avg files per cluster should be > 0"
+            );
+
+            // Average cluster size should be > 0 if we have data
+            if data_files_total_size > 0 {
+                assert!(
+                    clustering.avg_cluster_size_bytes > 0.0,
+                    "Avg cluster size should be > 0 when data exists"
+                );
+            }
+
+            // Clustering columns are empty for Lance (no explicit clustering columns)
+            assert!(
+                clustering.clustering_columns.is_empty(),
+                "Lance doesn't have explicit clustering columns"
             );
         }
     }

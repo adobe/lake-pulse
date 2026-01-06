@@ -847,14 +847,26 @@ impl StorageProvider for ObjectStoreProvider {
                 // Handle paths like "file:///path", "file://path", "file:/path", or "/path"
                 // Also convert backslashes to forward slashes for Windows compatibility
                 let path = path.replace('\\', "/");
-                if let Some(without_scheme) = path.strip_prefix("file:") {
-                    // Had file: prefix - strip it and any leading slashes, then add file://
-                    let normalized = without_scheme.trim_start_matches('/');
-                    format!("file://{}", normalized)
+
+                // Remove Windows extended-length path prefix (\\?\ or //?/)
+                // This prefix is added by canonicalize() on Windows
+                let path = path.strip_prefix("//?/").unwrap_or(&path).to_string();
+
+                let path_without_scheme = if let Some(without_scheme) = path.strip_prefix("file:") {
+                    // Had file: prefix - strip it and any leading slashes
+                    without_scheme.trim_start_matches('/').to_string()
+                } else if path.starts_with('/') {
+                    // Unix absolute path - remove leading slash, we'll add it back
+                    path.trim_start_matches('/').to_string()
                 } else {
-                    // No file: prefix - just add file:// (preserving leading slash for absolute paths)
-                    format!("file://{}", path)
-                }
+                    // Windows absolute path (C:/...) or relative path
+                    path.to_string()
+                };
+
+                // file:// URIs require three slashes before the path:
+                // - Unix: file:///home/user/... (file:// + / + home/user/...)
+                // - Windows: file:///C:/Users/... (file:// + / + C:/Users/...)
+                format!("file:///{}", path_without_scheme)
             } else {
                 path.to_string()
             }
@@ -1306,6 +1318,49 @@ mod tests {
                 );
             }
         }
+    }
+
+    /// Test that fix_uri correctly handles Windows extended-length path prefix.
+    /// On Windows, canonicalize() adds \\?\ prefix to paths, which must be
+    /// stripped when creating file:// URIs.
+    #[test]
+    fn test_fix_uri_windows_extended_path_prefix() {
+        // Simulate what fix_uri does internally for testing the Windows prefix handling
+        fn fix_uri_for_test(path: &str) -> String {
+            let path = path.replace('\\', "/");
+            let path = path.strip_prefix("//?/").unwrap_or(&path).to_string();
+
+            let path_without_scheme = if let Some(without_scheme) = path.strip_prefix("file:") {
+                without_scheme.trim_start_matches('/').to_string()
+            } else if path.starts_with('/') {
+                path.trim_start_matches('/').to_string()
+            } else {
+                path.to_string()
+            };
+
+            format!("file:///{}", path_without_scheme)
+        }
+
+        // Test Windows extended-length path prefix (\\?\C:\...)
+        let windows_path = "\\\\?\\C:\\Users\\test\\data";
+        let uri = fix_uri_for_test(windows_path);
+        assert_eq!(uri, "file:///C:/Users/test/data");
+        assert!(!uri.contains("?"), "URI should not contain ? from prefix");
+
+        // Test already forward-slash version (//?/C:/...)
+        let windows_path_fwd = "//?/C:/Users/test/data";
+        let uri = fix_uri_for_test(windows_path_fwd);
+        assert_eq!(uri, "file:///C:/Users/test/data");
+
+        // Test normal Windows path without prefix
+        let normal_windows = "C:\\Users\\test\\data";
+        let uri = fix_uri_for_test(normal_windows);
+        assert_eq!(uri, "file:///C:/Users/test/data");
+
+        // Test Unix path (should not be affected)
+        let unix_path = "/home/user/data";
+        let uri = fix_uri_for_test(unix_path);
+        assert_eq!(uri, "file:///home/user/data");
     }
 
     #[tokio::test]

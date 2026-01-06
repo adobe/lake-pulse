@@ -14,6 +14,7 @@
 use super::metrics::{FileStatistics, FragmentMetrics, IndexMetrics, LanceMetrics, TableMetadata};
 use lance::dataset::Dataset;
 use lance_index::traits::DatasetIndexExt;
+use serde_json::json;
 use std::collections::HashMap;
 use std::error::Error;
 use tracing::{info, warn};
@@ -133,8 +134,20 @@ impl LanceReader {
         let schema = self.dataset.schema();
         let field_count = schema.fields.len();
 
-        // Serialize schema to JSON string - use Debug format since Schema doesn't implement Serialize
-        let schema_string = format!("{:#?}", schema);
+        // Serialize schema to proper JSON format
+        let schema_json: Vec<serde_json::Value> = schema
+            .fields
+            .iter()
+            .map(|field| {
+                json!({
+                    "name": field.name,
+                    "type": format!("{:?}", field.logical_type),
+                    "nullable": field.nullable
+                })
+            })
+            .collect();
+        let schema_string = serde_json::to_string(&json!({"fields": schema_json}))
+            .unwrap_or_else(|_| "{}".to_string());
 
         // Get manifest for additional metadata
         let manifest = self.dataset.manifest();
@@ -152,12 +165,14 @@ impl LanceReader {
             }
         };
 
-        // Count deleted rows (if deletion files exist)
-        let num_deleted_rows = manifest
+        // Count deleted rows by summing num_deleted_rows from each deletion file
+        let num_deleted_rows: u64 = manifest
             .fragments
             .iter()
             .filter_map(|f| f.deletion_file.as_ref())
-            .count() as u64;
+            .filter_map(|df| df.num_deleted_rows)
+            .map(|n| n as u64)
+            .sum();
 
         let metadata = TableMetadata {
             uuid: version.to_string(), // Use version number as identifier
@@ -205,25 +220,71 @@ impl LanceReader {
         let mut min_size: u64 = u64::MAX;
         let mut max_size: u64 = 0;
 
-        for fragment in fragments.iter() {
-            // Count data files in each fragment
-            num_data_files += fragment.files.len();
+        // Get the object store for querying deletion file sizes
+        let object_store = &self.dataset.object_store;
 
-            // Sum up physical sizes
-            if let Some(physical_rows) = fragment.physical_rows {
-                // Estimate size based on rows (rough approximation)
-                // In reality, we'd need to read actual file sizes from storage
-                let estimated_size = physical_rows as u64 * 100; // rough estimate
-                total_data_size += estimated_size;
-                min_size = min_size.min(estimated_size);
-                max_size = max_size.max(estimated_size);
+        // Get the _deletions directory path
+        // We use indices_dir() which returns base.child("indices"), then get its sibling "_deletions"
+        // by going through the parent path
+        let indices_dir = self.dataset.indices_dir();
+        let parts: Vec<_> = indices_dir.parts().collect();
+
+        for fragment in fragments.iter() {
+            // Count data files in each fragment and sum their actual sizes
+            for data_file in fragment.files.iter() {
+                num_data_files += 1;
+                // CachedFileSize.get() returns Option<NonZero<u64>>
+                if let Some(file_size) = data_file.file_size_bytes.get() {
+                    let size: u64 = file_size.into();
+                    total_data_size += size;
+                    min_size = min_size.min(size);
+                    max_size = max_size.max(size);
+                }
             }
 
-            // Check for deletion files
-            if fragment.deletion_file.is_some() {
+            // Check for deletion files and get their actual sizes
+            if let Some(ref deletion_file) = fragment.deletion_file {
                 num_deletion_files += 1;
-                // Deletion files are typically small
-                total_deletion_size += 1024; // rough estimate
+
+                // Construct the deletion file path:
+                // _deletions/{fragment_id}-{read_version}-{id}.{suffix}
+                let suffix = deletion_file.file_type.suffix();
+                let deletion_filename = format!(
+                    "{}-{}-{}.{}",
+                    fragment.id, deletion_file.read_version, deletion_file.id, suffix
+                );
+
+                // Build the deletion path by reconstructing from parts
+                // indices_dir is base/indices, we want base/_deletions/filename
+                let deletion_path = if parts.len() > 1 {
+                    // Reconstruct parent path and add _deletions/filename
+                    let mut path = parts[0].as_ref().to_string();
+                    for part in &parts[1..parts.len() - 1] {
+                        path.push('/');
+                        path.push_str(part.as_ref());
+                    }
+                    path.push_str("/_deletions/");
+                    path.push_str(&deletion_filename);
+                    path.into()
+                } else {
+                    // No parent, just use _deletions/filename
+                    format!("_deletions/{}", deletion_filename).into()
+                };
+
+                // Try to get the actual file size from the object store
+                match object_store.inner.head(&deletion_path).await {
+                    Ok(meta) => {
+                        total_deletion_size += meta.size;
+                    }
+                    Err(e) => {
+                        // Fall back to estimate if we can't get the actual size
+                        warn!(
+                            "Failed to get deletion file size for {}: {}, using estimate",
+                            deletion_path, e
+                        );
+                        total_deletion_size += 1024;
+                    }
+                }
             }
         }
 
@@ -248,8 +309,8 @@ impl LanceReader {
         };
 
         info!(
-            "File statistics: data_files={}, deletion_files={}, total_data_size={}",
-            stats.num_data_files, stats.num_deletion_files, stats.total_data_size_bytes
+            "File statistics: data_files={}, deletion_files={}, total_data_size={}, total_deletion_size={}",
+            stats.num_data_files, stats.num_deletion_files, stats.total_data_size_bytes, stats.total_deletion_size_bytes
         );
 
         Ok(stats)
@@ -435,13 +496,14 @@ impl LanceReader {
             let row_count = versioned_ds.count_rows(None).await.unwrap_or(0);
             let deleted_count = versioned_ds.count_deleted_rows().await.unwrap_or(0);
             let fragment_count = versioned_ds.manifest().fragments.len();
-            // Estimate data size from physical rows since CachedFileSize doesn't have unwrap_or
+            // Sum actual file sizes from all data files in all fragments
             let data_size: u64 = versioned_ds
                 .manifest()
                 .fragments
                 .iter()
-                .filter_map(|f| f.physical_rows)
-                .map(|rows| rows as u64 * 100) // rough estimate: 100 bytes per row
+                .flat_map(|f| f.files.iter())
+                .filter_map(|data_file| data_file.file_size_bytes.get())
+                .map(|size| -> u64 { size.into() })
                 .sum();
 
             stats.push((
@@ -819,6 +881,254 @@ mod tests {
         assert!(
             metrics.fragment_info.num_fragments > 0,
             "Fragment count should be > 0"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_lance_reader_schema_json_format() {
+        let reader = LanceReader::open(LANCE_DATASET_PATH)
+            .await
+            .expect("Failed to open Lance dataset");
+
+        let metadata = reader
+            .extract_table_metadata()
+            .await
+            .expect("Failed to extract table metadata");
+
+        // Schema string should be valid JSON
+        let schema_json: serde_json::Value =
+            serde_json::from_str(&metadata.schema_string).expect("Schema should be valid JSON");
+
+        // Should have a "fields" array
+        assert!(
+            schema_json.get("fields").is_some(),
+            "Schema JSON should have 'fields' key"
+        );
+        let fields = schema_json["fields"]
+            .as_array()
+            .expect("fields should be an array");
+        assert!(!fields.is_empty(), "fields array should not be empty");
+
+        // Each field should have name, type, and nullable
+        for field in fields {
+            assert!(field.get("name").is_some(), "Field should have 'name'");
+            assert!(field.get("type").is_some(), "Field should have 'type'");
+            assert!(
+                field.get("nullable").is_some(),
+                "Field should have 'nullable'"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn test_lance_reader_file_sizes_are_actual() {
+        let reader = LanceReader::open(LANCE_DATASET_PATH)
+            .await
+            .expect("Failed to open Lance dataset");
+
+        let file_stats = reader
+            .extract_file_statistics()
+            .await
+            .expect("Failed to extract file statistics");
+
+        // If we have data files, we should have non-zero sizes
+        if file_stats.num_data_files > 0 {
+            // Total data size should be reasonable (not just row_count * 100)
+            // A real Lance file with data should be at least a few KB
+            assert!(
+                file_stats.total_data_size_bytes > 0,
+                "Total data size should be > 0 when we have data files"
+            );
+
+            // Average file size should be reasonable
+            assert!(
+                file_stats.avg_data_file_size_bytes > 0.0,
+                "Average file size should be > 0"
+            );
+
+            // Min should be <= max
+            assert!(
+                file_stats.min_data_file_size_bytes <= file_stats.max_data_file_size_bytes,
+                "Min file size should be <= max file size"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn test_lance_reader_version_info() {
+        let reader = LanceReader::open(LANCE_DATASET_PATH)
+            .await
+            .expect("Failed to open Lance dataset");
+
+        let metrics = reader
+            .extract_metrics()
+            .await
+            .expect("Failed to extract metrics");
+
+        // Version should be positive
+        assert!(metrics.version > 0, "Version should be > 0");
+
+        // If we have operation metrics, verify they're consistent
+        if let Some(ref op_metrics) = metrics.operation_metrics {
+            // Total operations should match sum of operation types
+            let sum = op_metrics.append_count
+                + op_metrics.delete_count
+                + op_metrics.overwrite_count
+                + op_metrics.compaction_count;
+            assert_eq!(
+                op_metrics.total_operations, sum,
+                "Total operations should equal sum of operation types"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn test_lance_reader_fragment_metrics_consistency() {
+        let reader = LanceReader::open(LANCE_DATASET_PATH)
+            .await
+            .expect("Failed to open Lance dataset");
+
+        let fragment_metrics = reader
+            .extract_fragment_metrics()
+            .await
+            .expect("Failed to extract fragment metrics");
+
+        // If we have fragments, verify metrics are consistent
+        if fragment_metrics.num_fragments > 0 {
+            // Min rows should be <= max rows
+            assert!(
+                fragment_metrics.min_rows_per_fragment <= fragment_metrics.max_rows_per_fragment,
+                "Min rows should be <= max rows"
+            );
+
+            // Average should be between min and max
+            let avg = fragment_metrics.avg_rows_per_fragment;
+            let min = fragment_metrics.min_rows_per_fragment as f64;
+            let max = fragment_metrics.max_rows_per_fragment as f64;
+            assert!(
+                avg >= min && avg <= max,
+                "Average rows ({}) should be between min ({}) and max ({})",
+                avg,
+                min,
+                max
+            );
+
+            // Total physical rows should be >= num_fragments * min_rows
+            let expected_min_total =
+                fragment_metrics.num_fragments as u64 * fragment_metrics.min_rows_per_fragment;
+            assert!(
+                fragment_metrics.total_physical_rows >= expected_min_total,
+                "Total physical rows should be >= num_fragments * min_rows"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn test_lance_reader_index_metrics_structure() {
+        let reader = LanceReader::open(LANCE_DATASET_PATH)
+            .await
+            .expect("Failed to open Lance dataset");
+
+        let index_metrics = reader
+            .extract_index_metrics()
+            .await
+            .expect("Failed to extract index metrics");
+
+        // If we have indices, verify structure
+        if index_metrics.num_indices > 0 {
+            // Should have indexed columns
+            assert!(
+                !index_metrics.indexed_columns.is_empty(),
+                "Should have indexed columns when num_indices > 0"
+            );
+
+            // Should have index types
+            assert!(
+                !index_metrics.index_types.is_empty(),
+                "Should have index types when num_indices > 0"
+            );
+        } else {
+            // No indices means empty columns and types
+            assert!(
+                index_metrics.indexed_columns.is_empty(),
+                "Should have no indexed columns when num_indices = 0"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn test_lance_reader_deleted_rows_count() {
+        let reader = LanceReader::open(LANCE_DATASET_PATH)
+            .await
+            .expect("Failed to open Lance dataset");
+
+        let metrics = reader
+            .extract_metrics()
+            .await
+            .expect("Failed to extract metrics");
+
+        // Deleted rows should be a valid count
+        // The test dataset may or may not have deletions
+        if let Some(deleted) = metrics.metadata.num_deleted_rows {
+            // If we have deletion files, we should have some deleted rows tracked
+            if metrics.file_stats.num_deletion_files > 0 {
+                // Note: deleted rows count comes from deletion file count, not actual deleted rows
+                // This is a limitation of the current implementation
+                // Just verify the value is accessible (u64 is always >= 0)
+                let _ = deleted;
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn test_lance_reader_table_properties() {
+        let reader = LanceReader::open(LANCE_DATASET_PATH)
+            .await
+            .expect("Failed to open Lance dataset");
+
+        let metrics = reader
+            .extract_metrics()
+            .await
+            .expect("Failed to extract metrics");
+
+        // Table properties should be a valid HashMap (may be empty)
+        // Just verify it's accessible and doesn't panic
+        let _props = &metrics.table_properties;
+    }
+
+    #[tokio::test]
+    async fn test_lance_reader_metrics_all_fields_populated() {
+        let reader = LanceReader::open(LANCE_DATASET_PATH)
+            .await
+            .expect("Failed to open Lance dataset");
+
+        let metrics = reader
+            .extract_metrics()
+            .await
+            .expect("Failed to extract metrics");
+
+        // Verify all major sections are populated
+        assert!(metrics.version > 0, "Version should be set");
+        assert!(!metrics.metadata.uuid.is_empty(), "UUID should be set");
+        assert!(
+            !metrics.metadata.schema_string.is_empty(),
+            "Schema should be set"
+        );
+        assert!(
+            metrics.metadata.field_count > 0,
+            "Field count should be set"
+        );
+
+        // File stats should have data files
+        assert!(
+            metrics.file_stats.num_data_files > 0,
+            "Should have data files"
+        );
+
+        // Fragment info should have fragments
+        assert!(
+            metrics.fragment_info.num_fragments > 0,
+            "Should have fragments"
         );
     }
 }

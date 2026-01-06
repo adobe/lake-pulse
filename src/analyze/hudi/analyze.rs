@@ -320,11 +320,17 @@ pub struct HudiMetadataProcessingResult {
     pub total_compactions: usize,
     pub total_rollbacks: usize,
     pub total_cleans: usize,
+    /// Number of replace commits (used for clustering operations)
+    pub total_replace_commits: usize,
     pub oldest_timestamp: u64,
     pub newest_timestamp: u64,
     pub total_bytes_written: i64,
     pub schema_changes: Vec<SchemaChange>,
     pub file_paths: HashSet<String>,
+    /// Partition fields from hoodie.properties (used for clustering columns)
+    pub partition_fields: Vec<String>,
+    /// Record key fields from hoodie.properties
+    pub record_key_fields: Vec<String>,
 }
 
 /// Apache Hudi-specific analyzer for processing Hudi tables.
@@ -559,38 +565,6 @@ impl HudiAnalyzer {
         filename.split('_').next().map(|s| s.to_string())
     }
 
-    /// Parse a timeline filename to extract timestamp, action type, and state.
-    #[allow(dead_code)]
-    fn parse_timeline_filename(
-        &self,
-        filename: &str,
-    ) -> Option<(String, HudiActionType, HudiActionState)> {
-        let parts: Vec<&str> = filename.split('.').collect();
-        if parts.is_empty() {
-            return None;
-        }
-
-        let timestamp = parts[0].to_string();
-
-        let (action_type, state) = if parts.len() >= 2 {
-            let action = HudiActionType::from(parts[1]);
-            let state = if parts.len() >= 3 {
-                match parts[2] {
-                    "requested" => HudiActionState::Requested,
-                    "inflight" => HudiActionState::Inflight,
-                    _ => HudiActionState::Completed,
-                }
-            } else {
-                HudiActionState::Completed
-            };
-            (action, state)
-        } else {
-            return None;
-        };
-
-        Some((timestamp, action_type, state))
-    }
-
     /// Update health metrics from Hudi metadata files.
     ///
     /// Parses Hudi timeline files (.commit, .deltacommit, .clean, etc.) and hoodie.properties
@@ -768,7 +742,11 @@ impl HudiAnalyzer {
             deletion_vector_impact_score: deletion_impact,
         });
 
-        // Set table constraints metrics (Hudi doesn't have built-in constraints)
+        // Table constraints metrics - Hudi does not have built-in constraint support
+        // Unlike Delta Lake which supports CHECK constraints and NOT NULL enforcement,
+        // Hudi relies on external schema validation (e.g., Avro schema) for data quality.
+        // We set data_quality_score to 1.0 (no constraint violations possible) and
+        // constraint_coverage_score to 0.0 (no constraints defined) to reflect this.
         metrics.table_constraints = Some(TableConstraintsMetrics {
             total_constraints: 0,
             check_constraints: 0,
@@ -780,13 +758,32 @@ impl HudiAnalyzer {
             constraint_coverage_score: 0.0,
         });
 
-        // Set clustering info
+        // Set clustering info based on partition fields and replace commits
+        // In Hudi, clustering is done via replacecommit actions
+        // Partition fields serve as the clustering columns
+        let partition_count = metrics.partitions.len().max(1);
+        let avg_files_per_cluster = if partition_count > 0 {
+            data_files_total_files as f64 / partition_count as f64
+        } else {
+            0.0
+        };
+        let avg_cluster_size_bytes = if partition_count > 0 {
+            data_files_total_size as f64 / partition_count as f64
+        } else {
+            0.0
+        };
+
         metrics.clustering = Some(ClusteringInfo {
-            clustering_columns: Vec::new(),
-            cluster_count: 0,
-            avg_files_per_cluster: 0.0,
-            avg_cluster_size_bytes: 0.0,
+            clustering_columns: result.partition_fields.clone(),
+            cluster_count: partition_count,
+            avg_files_per_cluster,
+            avg_cluster_size_bytes,
         });
+
+        info!(
+            "Hudi clustering: columns={:?}, clusters={}, replace_commits={}",
+            result.partition_fields, partition_count, result.total_replace_commits
+        );
 
         Ok(())
     }
@@ -809,11 +806,14 @@ impl HudiAnalyzer {
         if let Some(props_file) = properties_file {
             let content = self.storage_provider.read_file(&props_file.path).await?;
             let content_str = String::from_utf8_lossy(&content);
-            let _properties = HoodieProperties::parse(&content_str);
+            let properties = HoodieProperties::parse(&content_str);
             info!(
                 "Parsed hoodie.properties: table_name={}",
-                _properties.table_name
+                properties.table_name
             );
+            // Store partition and record key fields for clustering info
+            result.partition_fields = properties.partition_fields.clone();
+            result.record_key_fields = properties.record_key_fields.clone();
         }
 
         // Filter to only timeline files
@@ -923,6 +923,10 @@ impl HudiAnalyzer {
                         }
                         HudiActionType::Clean => {
                             result.total_cleans += 1;
+                        }
+                        HudiActionType::ReplaceCommit => {
+                            // ReplaceCommit is used for clustering operations in Hudi
+                            result.total_replace_commits += 1;
                         }
                         _ => {}
                     }
@@ -1702,83 +1706,6 @@ hoodie.table.type=COPY_ON_WRITE
             assert_eq!(file_id.unwrap(), "");
         }
 
-        #[test]
-        fn test_parse_timeline_filename_commit() {
-            let analyzer = create_mock_analyzer();
-            let result = analyzer.parse_timeline_filename("20251110222213846.commit");
-            assert!(result.is_some());
-            let (timestamp, action_type, state) = result.unwrap();
-            assert_eq!(timestamp, "20251110222213846");
-            assert!(matches!(action_type, HudiActionType::Commit));
-            assert!(matches!(state, HudiActionState::Completed));
-        }
-
-        #[test]
-        fn test_parse_timeline_filename_deltacommit() {
-            let analyzer = create_mock_analyzer();
-            let result = analyzer.parse_timeline_filename("20251110222213846.deltacommit");
-            assert!(result.is_some());
-            let (_, action_type, state) = result.unwrap();
-            assert!(matches!(action_type, HudiActionType::DeltaCommit));
-            assert!(matches!(state, HudiActionState::Completed));
-        }
-
-        #[test]
-        fn test_parse_timeline_filename_inflight() {
-            let analyzer = create_mock_analyzer();
-            let result = analyzer.parse_timeline_filename("20251110222213846.commit.inflight");
-            assert!(result.is_some());
-            let (_, action_type, state) = result.unwrap();
-            assert!(matches!(action_type, HudiActionType::Commit));
-            assert!(matches!(state, HudiActionState::Inflight));
-        }
-
-        #[test]
-        fn test_parse_timeline_filename_requested() {
-            let analyzer = create_mock_analyzer();
-            let result = analyzer.parse_timeline_filename("20251110222213846.compaction.requested");
-            assert!(result.is_some());
-            let (_, action_type, state) = result.unwrap();
-            assert!(matches!(action_type, HudiActionType::Compaction));
-            assert!(matches!(state, HudiActionState::Requested));
-        }
-
-        #[test]
-        fn test_parse_timeline_filename_invalid() {
-            let analyzer = create_mock_analyzer();
-            assert!(analyzer
-                .parse_timeline_filename("hoodie.properties")
-                .is_some()); // Returns Some with Unknown action
-            assert!(analyzer.parse_timeline_filename("invalid").is_none()); // Only one part
-            assert!(analyzer.parse_timeline_filename("").is_none()); // Empty
-        }
-
-        #[test]
-        fn test_parse_timeline_filename_all_action_types() {
-            let analyzer = create_mock_analyzer();
-            let test_cases = vec![
-                ("20251110.commit", HudiActionType::Commit),
-                ("20251110.deltacommit", HudiActionType::DeltaCommit),
-                ("20251110.clean", HudiActionType::Clean),
-                ("20251110.compaction", HudiActionType::Compaction),
-                ("20251110.rollback", HudiActionType::Rollback),
-                ("20251110.savepoint", HudiActionType::Savepoint),
-                ("20251110.replacecommit", HudiActionType::ReplaceCommit),
-                ("20251110.indexing", HudiActionType::Indexing),
-            ];
-
-            for (filename, expected_type) in test_cases {
-                let result = analyzer.parse_timeline_filename(filename);
-                assert!(result.is_some(), "Failed to parse: {}", filename);
-                let (_, action_type, _) = result.unwrap();
-                assert!(
-                    std::mem::discriminant(&action_type) == std::mem::discriminant(&expected_type),
-                    "Wrong action type for: {}",
-                    filename
-                );
-            }
-        }
-
         // ==================== Async Unit Tests ====================
 
         #[tokio::test]
@@ -1995,37 +1922,6 @@ hoodie.table.type=COPY_ON_WRITE
                 analyzer.extract_file_id_from_path("simple.parquet"),
                 Some("simple.parquet".to_string())
             );
-        }
-
-        #[tokio::test]
-        async fn test_parse_timeline_filename() {
-            let analyzer = create_test_analyzer().await;
-
-            // Completed commit
-            let result = analyzer.parse_timeline_filename("20251110222213846.commit");
-            assert!(result.is_some());
-            let (ts, action, state) = result.unwrap();
-            assert_eq!(ts, "20251110222213846");
-            assert!(matches!(action, HudiActionType::Commit));
-            assert!(matches!(state, HudiActionState::Completed));
-
-            // Inflight deltacommit
-            let result = analyzer.parse_timeline_filename("20251110222213846.deltacommit.inflight");
-            assert!(result.is_some());
-            let (_, action, state) = result.unwrap();
-            assert!(matches!(action, HudiActionType::DeltaCommit));
-            assert!(matches!(state, HudiActionState::Inflight));
-
-            // Requested clean
-            let result = analyzer.parse_timeline_filename("20251110222213846.clean.requested");
-            assert!(result.is_some());
-            let (_, action, state) = result.unwrap();
-            assert!(matches!(action, HudiActionType::Clean));
-            assert!(matches!(state, HudiActionState::Requested));
-
-            // Invalid filename
-            assert!(analyzer.parse_timeline_filename("invalid").is_none());
-            assert!(analyzer.parse_timeline_filename("").is_none());
         }
 
         #[tokio::test]
