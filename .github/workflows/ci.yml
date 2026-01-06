@@ -94,8 +94,8 @@ jobs:
             features: "--features hudi"
           - name: "lance"
             features: "--features lance"
-          - name: "experimental (hudi + lance)"
-            features: "--features experimental"
+          - name: "all (hudi + lance)"
+            features: "--features all"
     steps:
       - uses: actions/checkout@v6
 
@@ -136,13 +136,13 @@ jobs:
       - name: Run examples
         run: |
           echo "Running local store examples..."
-          cargo run --features experimental --example local_store
-          cargo run --features experimental --example local_store_custom
-          cargo run --features experimental --example local_store_hudi
-          cargo run --features experimental --example local_store_iceberg
-          cargo run --features experimental --example local_store_json
-          cargo run --features experimental --example local_store_lance
-          cargo run --features experimental --example local_store_synthetic_deletion_vectors
+          cargo run --features all --example local_store
+          cargo run --features all --example local_store_custom
+          cargo run --features all --example local_store_hudi
+          cargo run --features all --example local_store_iceberg
+          cargo run --features all --example local_store_json
+          cargo run --features all --example local_store_lance
+          cargo run --features all --example local_store_synthetic_deletion_vectors
 
   test-platforms:
     name: Test on ${{ matrix.os }}
