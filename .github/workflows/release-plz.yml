@@ -79,6 +79,7 @@ jobs:
         uses: actions-rust-lang/setup-rust-toolchain@v1
 
       - name: Run release-plz release-pr
+        id: release-pr
         uses: release-plz/action@v0.5
         with:
           command: release-pr
@@ -86,28 +87,37 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       # Set the "required" status to success for release PRs.
-      # Release PRs do contain changes that are already validated and merged
+      # Release PRs contain changes that are already validated and merged
       # so no need to re-run CI.
-      # This is needed because PRs created by GITHUB_TOKEN don't trigger
+      # This is needed because PRs created/updated by GITHUB_TOKEN don't trigger
       # other workflows, leaving the "required" status pending.
       - name: Set release PR status to success
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PRS: ${{ steps.release-pr.outputs.prs }}
         run: |
-          # Find all open release PRs (branch starts with "release-plz-")
-          PR_SHAS=$(gh pr list \
-            --repo "${{ github.repository }}" \
-            --state open \
-            --json headRefName,headRefOid \
-            --jq '.[] | select(.headRefName | startswith("release-plz-")) | .headRefOid')
+          # If release-plz created/updated PRs, use those PR numbers
+          if [[ -n "$PRS" && "$PRS" != "[]" ]]; then
+            echo "Using PR numbers from release-plz output"
+            PR_NUMBERS=$(echo "$PRS" | jq -r '.[].number')
+          else
+            # Fallback: find open release PRs by branch prefix
+            echo "No PRs in release-plz output. Searching for open release PRs..."
+            PR_NUMBERS=$(gh pr list \
+              --repo "${{ github.repository }}" \
+              --state open \
+              --json number,headRefName \
+              --jq '.[] | select(.headRefName | startswith("release-plz-")) | .number')
+          fi
 
-          if [[ -z "$PR_SHAS" ]]; then
-            echo "No open release PRs found. Skipping status update."
+          if [[ -z "$PR_NUMBERS" ]]; then
+            echo "No release PRs found. Skipping."
             exit 0
           fi
 
-          echo "$PR_SHAS" | while read -r PR_SHA; do
-            echo "Setting required status to success for SHA: $PR_SHA"
+          echo "$PR_NUMBERS" | while read -r PR_NUMBER; do
+            PR_SHA=$(gh pr view "$PR_NUMBER" --repo "${{ github.repository }}" --json headRefOid --jq '.headRefOid')
+            echo "Setting required status to success for PR #$PR_NUMBER (SHA: $PR_SHA)"
             gh api \
               --method POST \
               -H "Accept: application/vnd.github+json" \
