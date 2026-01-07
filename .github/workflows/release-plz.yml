@@ -98,9 +98,8 @@ jobs:
           PR_SHAS=$(gh pr list \
             --repo "${{ github.repository }}" \
             --state open \
-            --head "release-plz-" \
-            --json headRefOid \
-            --jq '.[].headRefOid')
+            --json headRefName,headRefOid \
+            --jq '.[] | select(.headRefName | startswith("release-plz-")) | .headRefOid')
 
           if [[ -z "$PR_SHAS" ]]; then
             echo "No open release PRs found. Skipping status update."
