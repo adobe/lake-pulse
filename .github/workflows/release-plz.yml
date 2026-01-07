@@ -59,6 +59,7 @@ jobs:
     permissions:
       contents: write
       pull-requests: write
+      statuses: write
     concurrency:
       group: release-plz-${{ github.ref }}
       cancel-in-progress: false
@@ -83,4 +84,37 @@ jobs:
           command: release-pr
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      # Set the "required" status to success for release PRs.
+      # Release PRs do contain changes that are already validated and merged
+      # so no need to re-run CI.
+      # This is needed because PRs created by GITHUB_TOKEN don't trigger
+      # other workflows, leaving the "required" status pending.
+      - name: Set release PR status to success
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          # Find all open release PRs (branch starts with "release-plz-")
+          PR_SHAS=$(gh pr list \
+            --repo "${{ github.repository }}" \
+            --state open \
+            --head "release-plz-" \
+            --json headRefOid \
+            --jq '.[].headRefOid')
+
+          if [[ -z "$PR_SHAS" ]]; then
+            echo "No open release PRs found. Skipping status update."
+            exit 0
+          fi
+
+          echo "$PR_SHAS" | while read -r PR_SHA; do
+            echo "Setting required status to success for SHA: $PR_SHA"
+            gh api \
+              --method POST \
+              -H "Accept: application/vnd.github+json" \
+              "/repos/${{ github.repository }}/statuses/$PR_SHA" \
+              -f state='success' \
+              -f context='required' \
+              -f description='Release PR - CI not required'
+          done
 
