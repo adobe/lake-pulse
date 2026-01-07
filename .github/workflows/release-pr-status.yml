@@ -59,7 +59,9 @@ jobs:
     # For 'labeled' events: require BOTH the branch prefix AND the release label
     # For other events (opened, synchronize, reopened): only check branch prefix
     # This handles the race condition where release-plz adds the label AFTER pushing
+    # Also ensure the PR is still open (not merged or closed)
     if: |
+      github.event.pull_request.state == 'open' &&
       startsWith(github.head_ref, 'release-plz-') &&
       (github.event.action != 'labeled' || contains(github.event.pull_request.labels.*.name, 'release'))
     runs-on: ubuntu-latest
