@@ -16,26 +16,8 @@ name: CI
 on:
   push:
     branches: [ main ]
-    paths-ignore:
-      - '**.md'
-      - 'docs/**'
-      - 'LICENSE-*'
-      - '.gitignore'
-      - '*.svg'
-      - '*.png'
-      - '*.jpg'
-      - '*.gif'
   pull_request:
     branches: [ main ]
-    paths-ignore:
-      - '**.md'
-      - 'docs/**'
-      - 'LICENSE-*'
-      - '.gitignore'
-      - '*.svg'
-      - '*.png'
-      - '*.jpg'
-      - '*.gif'
   workflow_dispatch:
 
 # Concurrency strategy:
@@ -50,8 +32,29 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  # Detect what files changed to conditionally skip expensive jobs
+  changes:
+    name: Detect Changes
+    runs-on: ubuntu-latest
+    outputs:
+      code: ${{ steps.filter.outputs.code }}
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: dorny/paths-filter@v3
+        id: filter
+        with:
+          filters: |
+            code:
+              - '**/*.rs'
+              - '**/Cargo.toml'
+              - '.github/workflows/**'
+              - 'licenserc.yaml'
+
   license-header:
     name: License Header
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
@@ -61,6 +64,8 @@ jobs:
 
   check:
     name: Check
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
@@ -83,6 +88,8 @@ jobs:
 
   test:
     name: Test (${{ matrix.name }})
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
@@ -118,6 +125,8 @@ jobs:
 
   test-examples:
     name: Test Examples
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
@@ -146,6 +155,8 @@ jobs:
 
   test-platforms:
     name: Test on ${{ matrix.os }}
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
     runs-on: ${{ matrix.os }}
     strategy:
       matrix:
@@ -181,6 +192,8 @@ jobs:
 
   coverage:
     name: Code Coverage
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
@@ -214,6 +227,7 @@ jobs:
     runs-on: ubuntu-latest
     if: always()
     needs:
+      - changes
       - license-header
       - check
       - test
@@ -223,15 +237,29 @@ jobs:
     steps:
       - name: Guardian
         run: |
-          if [[ ! ( \
-                 "${{ needs.license-header.result }}" == "success" \
-              && "${{ needs.check.result }}" == "success" \
-              && "${{ needs.test.result }}" == "success" \
-              && "${{ needs.test-examples.result }}" == "success" \
-              && "${{ needs.test-platforms.result }}" == "success" \
-              && "${{ needs.coverage.result }}" == "success" \
-              ) ]]; then
-            echo "Required jobs haven't been completed successfully."
-            exit 1
+          # If no code changes, all jobs will be skipped - that's OK
+          if [[ "${{ needs.changes.outputs.code }}" != "true" ]]; then
+            echo "No code changes detected. Skipping CI checks."
+            exit 0
           fi
+
+          # Code changes detected - all jobs must succeed
+          results=(
+            "${{ needs.license-header.result }}"
+            "${{ needs.check.result }}"
+            "${{ needs.test.result }}"
+            "${{ needs.test-examples.result }}"
+            "${{ needs.test-platforms.result }}"
+            "${{ needs.coverage.result }}"
+          )
+
+          for result in "${results[@]}"; do
+            if [[ "$result" != "success" ]]; then
+              echo "Required jobs haven't been completed successfully."
+              echo "Found result: $result"
+              exit 1
+            fi
+          done
+
+          echo "All required jobs passed."
 
