@@ -5,11 +5,13 @@
 [![Docs][docs-badge]][docs-link]
 [![License: MIT or Apache-2.0][license-badge]][license-link]
 [![Latest Version][crates-badge]][crates-link]
+[![Downloads][downloads-badge]][crates-link]
 
 [ci-badge]: https://github.com/adobe/lake-pulse/actions/workflows/ci.yml/badge.svg
 [ci-link]: https://github.com/adobe/lake-pulse/actions/workflows/ci.yml
 [crates-badge]: https://img.shields.io/crates/v/lake-pulse.svg
 [crates-link]: https://crates.io/crates/lake-pulse
+[downloads-badge]: https://img.shields.io/crates/d/lake-pulse.svg
 [coverage-badge]: https://codecov.io/gh/adobe/lake-pulse/graph/badge.svg?token=3mH5uUJ6se
 [coverage-link]: https://codecov.io/gh/adobe/lake-pulse
 [license-badge]: https://img.shields.io/badge/license-MIT_or_Apache--2.0-blue
