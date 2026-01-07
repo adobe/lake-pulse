@@ -41,10 +41,11 @@
 # 3. Uses GitHub API to set the "required" status check to success.
 #
 # SECURITY:
-# The dual check (branch prefix + label) prevents abuse:
-# - Random PRs with "release" label won't bypass CI (wrong branch)
-# - Random PRs from "release-plz-*" branches won't bypass CI (no label)
-# - Only PRs created by release-plz satisfy both conditions
+# The branch prefix check prevents abuse - only branches starting with
+# "release-plz-" can bypass CI. For 'labeled' events, we also verify the
+# 'release' label is present. For other events (opened, synchronize, reopened),
+# we only check the branch prefix because release-plz may add the label AFTER
+# pushing, causing a race condition.
 
 name: Release PR Status
 
@@ -55,10 +56,12 @@ on:
 jobs:
   set-status:
     name: Set Release PR Status
-    # Only run for release PRs: must have BOTH the branch prefix AND the label
+    # For 'labeled' events: require BOTH the branch prefix AND the release label
+    # For other events (opened, synchronize, reopened): only check branch prefix
+    # This handles the race condition where release-plz adds the label AFTER pushing
     if: |
       startsWith(github.head_ref, 'release-plz-') &&
-      contains(github.event.pull_request.labels.*.name, 'release')
+      (github.event.action != 'labeled' || contains(github.event.pull_request.labels.*.name, 'release'))
     runs-on: ubuntu-latest
     permissions:
       statuses: write
