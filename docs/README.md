@@ -13,13 +13,13 @@ This directory contains documentation resources for Lake Pulse.
 [![Apache Hudi][hudi-badge]][hudi-link]
 [![Lance][lance-badge]][lance-link]
 
-[delta-badge]: badges/delta-lake.svg
+[delta-badge]: badges/delta-lake-logo.svg
 [delta-link]: https://github.com/delta-io/delta
-[iceberg-badge]: badges/apache-iceberg.svg
+[iceberg-badge]: badges/apache-iceberg-logo.svg
 [iceberg-link]: https://github.com/apache/iceberg
-[hudi-badge]: badges/apache-hudi.svg
+[hudi-badge]: badges/apache-hudi-logo.svg
 [hudi-link]: https://github.com/apache/hudi
-[lance-badge]: badges/lance.svg
+[lance-badge]: badges/lance-logo.svg
 [lance-link]: https://github.com/lancedb/lance
 
 ## Examples

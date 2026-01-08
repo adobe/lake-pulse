@@ -30,13 +30,13 @@ A Rust library for analyzing data lake table health — *checking the pulse* —
 [![Apache Hudi][hudi-badge]][hudi-link]
 [![Lance][lance-badge]][lance-link]
 
-[delta-badge]: docs/badges/delta-lake.svg
+[delta-badge]: docs/badges/delta-lake-logo.svg
 [delta-link]: https://github.com/delta-io/delta
-[iceberg-badge]: docs/badges/apache-iceberg.svg
+[iceberg-badge]: docs/badges/apache-iceberg-logo.svg
 [iceberg-link]: https://github.com/apache/iceberg
-[hudi-badge]: docs/badges/apache-hudi.svg
+[hudi-badge]: docs/badges/apache-hudi-logo.svg
 [hudi-link]: https://github.com/apache/hudi
-[lance-badge]: docs/badges/lance.svg
+[lance-badge]: docs/badges/lance-logo.svg
 [lance-link]: https://github.com/lancedb/lance
 
 ## Overview
