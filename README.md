@@ -19,9 +19,7 @@
 [docs-badge]: https://docs.rs/lake-pulse/badge.svg
 [docs-link]: https://docs.rs/lake-pulse
 
-![Lake Pulse Logo][logo]
-
-[logo]: lake-pulse-logo.svg
+![Lake Pulse Logo](lake-pulse-logo-new.svg)
 
 A Rust library for analyzing data lake table health — *checking the pulse* — across multiple formats (Delta Lake, Apache Iceberg, Apache Hudi, Lance) and storage providers (AWS S3, Azure Data Lake, GCS, Local).
 
