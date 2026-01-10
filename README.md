@@ -185,6 +185,11 @@ For detailed information on configuration options, refer to the `object_store` c
 - [Azure Configuration](https://docs.rs/object_store/latest/object_store/azure/enum.AzureConfigKey.html)
 - [GCP Configuration](https://docs.rs/object_store/latest/object_store/gcp/enum.GoogleConfigKey.html)
 
+## Supported Storages
+
+See [LAKE_PULSE_SUPPORTED_STORAGES.md](docs/LAKE_PULSE_SUPPORTED_STORAGES.md) for a
+comparison of storage providers supported by Lake Pulse.
+
 ## Minimum Supported Rust Version (MSRV)
 
 This crate requires Rust **1.88** or later.

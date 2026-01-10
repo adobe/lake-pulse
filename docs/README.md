@@ -35,6 +35,11 @@ For detailed information on configuration options, refer to the `object_store` a
 - [GCP Configuration](https://docs.rs/object_store/latest/object_store/gcp/enum.GoogleConfigKey.html)
 - [HDFS Configuration](https://docs.rs/hdfs-native-object-store/latest/hdfs_native_object_store/)
 
+## Supported Storages
+
+See [LAKE_PULSE_SUPPORTED_STORAGES.md](LAKE_PULSE_SUPPORTED_STORAGES.md) for a 
+comparison of storage providers supported by Lake Pulse.
+
 ## License
 
 See LICENSE files for details.
