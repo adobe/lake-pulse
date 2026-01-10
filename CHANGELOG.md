@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.0](https://github.com/adobe/lake-pulse/compare/v0.1.4...v0.2.0) - 2026-01-10
+
+### Added
+
+- [**breaking**] Add support for HTTP/WebDAV
+- [**breaking**] Add HDFS support
+
+### Documentation
+
+- Document supported storages
+
 ## [0.1.4](https://github.com/adobe/lake-pulse/compare/v0.1.3...v0.1.4) - 2026-01-08
 
 ### Documentation
