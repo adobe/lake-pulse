@@ -1,6 +1,6 @@
 ![Lake Pulse Logo](../lake-pulse-logo-new.svg)
 
-A Rust library for analyzing data lake table health — *checking the pulse* — across multiple formats (Delta Lake, Apache Iceberg, Apache Hudi, Lance) and storage providers (AWS S3, Azure Data Lake, GCS, Local).
+A Rust library for analyzing data lake table health — *checking the pulse* — across multiple formats (Delta Lake, Apache Iceberg, Apache Hudi, Lance) and storage providers (AWS S3, Azure Data Lake, GCS, HDFS, Local).
 
 # Documentation
 
@@ -28,10 +28,12 @@ See the [examples](../examples/) directory for more detailed usage examples.
 
 ## Cloud Storage Documentation
 
-For detailed information on configuration options, refer to the `object_store` crate documentation:
+For detailed information on configuration options, refer to the `object_store` and 
+`hdfs-native-object-store` crates documentation:
 - [AWS S3 Configuration](https://docs.rs/object_store/latest/object_store/aws/enum.AmazonS3ConfigKey.html)
 - [Azure Configuration](https://docs.rs/object_store/latest/object_store/azure/enum.AzureConfigKey.html)
 - [GCP Configuration](https://docs.rs/object_store/latest/object_store/gcp/enum.GoogleConfigKey.html)
+- [HDFS Configuration](https://docs.rs/hdfs-native-object-store/latest/hdfs_native_object_store/)
 
 ## License
 

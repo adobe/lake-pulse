@@ -43,6 +43,7 @@ bytes = "1.0"
 chrono = "0.4"
 log = "0.4.28"
 parquet = "57.1"
+hdfs-native-object-store = "0.16"
 
 [dev-dependencies]
 tempfile = "3.8"

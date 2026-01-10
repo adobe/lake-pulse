@@ -21,7 +21,7 @@
 
 ![Lake Pulse Logo](lake-pulse-logo-new.svg)
 
-A Rust library for analyzing data lake table health — *checking the pulse* — across multiple formats (Delta Lake, Apache Iceberg, Apache Hudi, Lance) and storage providers (AWS S3, Azure Data Lake, GCS, Local).
+A Rust library for analyzing data lake table health — *checking the pulse* — across multiple formats (Delta Lake, Apache Iceberg, Apache Hudi, Lance) and storage providers (AWS S3, Azure Data Lake, GCS, HDFS, Local).
 
 ## Supported Formats
 
@@ -138,6 +138,18 @@ Common options for GCP (see [object_store GCP documentation](https://docs.rs/obj
 - `bucket` - GCS bucket name
 - `service_account_key` - Path to service account JSON key file
 
+### HDFS Configuration Options
+
+HDFS support is provided via the [`hdfs-native-object-store`](https://docs.rs/hdfs-native-object-store/) crate:
+- `url` - HDFS namenode URL (e.g., "hdfs://namenode:8020")
+
+```rust
+let storage_config = StorageConfig::hdfs()
+    .with_option("url", "hdfs://namenode:8020");
+let analyzer = Analyzer::builder(storage_config).build().await.unwrap();
+let report = analyzer.analyze("/path/to/table").await.unwrap();
+```
+
 ### Local Filesystem
 
 ```rust
@@ -151,6 +163,7 @@ let report = analyzer.analyze("/path/to/table").await.unwrap();
 See the [`examples/`](examples/) directory for more detailed usage examples:
 - `s3_store.rs` - AWS S3 example
 - `adl_store.rs` - Azure Data Lake example
+- `hdfs_store.rs` - HDFS example
 - `local_store.rs` - Local filesystem example
 - `local_store_iceberg.rs` - Iceberg table example
 - `local_store_hudi.rs` - Hudi table example *(requires `hudi` feature)*
