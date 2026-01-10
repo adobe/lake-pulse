@@ -27,6 +27,8 @@ pub enum StorageType {
     Azure,
     /// Google Cloud Storage
     Gcs,
+    /// Hadoop Distributed File System
+    Hdfs,
 }
 
 /// Generic configuration for storage providers using object_store
@@ -75,6 +77,14 @@ pub enum StorageType {
 ///     .with_option("bucket", "my-bucket")
 ///     .with_option("service_account_key_path", "/path/to/key.json");
 /// ```
+///
+/// ## HDFS
+/// ```
+/// use lake_pulse::storage::StorageConfig;
+///
+/// let config = StorageConfig::new("hdfs")
+///     .with_option("url", "hdfs://namenode:9000");
+/// ```
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct StorageConfig {
     /// Storage provider type
@@ -111,6 +121,9 @@ pub struct StorageConfig {
     ///
     /// Local:
     /// - path: Base path
+    ///
+    /// HDFS:
+    /// - url: HDFS namenode URL (e.g., "hdfs://namenode:9000")
     #[serde(default)]
     pub options: HashMap<String, String>,
 }
@@ -165,6 +178,7 @@ impl StorageConfig {
             "aws" | "s3" => StorageType::Aws,
             "azure" => StorageType::Azure,
             "gcs" | "gcp" => StorageType::Gcs,
+            "hdfs" => StorageType::Hdfs,
             _ => {
                 return Err(StorageError::ConfigError(format!(
                     "Unknown storage type: {}",
@@ -224,6 +238,18 @@ impl StorageConfig {
         Self {
             storage_type: StorageType::Gcs,
             options: HashMap::new(),
+        }
+    }
+
+    /// Create an HDFS storage configuration.
+    ///
+    /// # Returns
+    ///
+    /// A new `StorageConfig` instance configured for HDFS access with default options.
+    pub fn hdfs() -> Self {
+        Self {
+            storage_type: StorageType::Hdfs,
+            options: Self::default_options(),
         }
     }
 
@@ -296,13 +322,14 @@ impl StorageConfig {
     ///
     /// # Returns
     ///
-    /// A string slice representing the storage type ("local", "aws", "azure", or "gcs").
+    /// A string slice representing the storage type ("local", "aws", "azure", "gcs", or "hdfs").
     pub fn storage_type_str(&self) -> &str {
         match self.storage_type {
             StorageType::Local => "local",
             StorageType::Aws => "aws",
             StorageType::Azure => "azure",
             StorageType::Gcs => "gcs",
+            StorageType::Hdfs => "hdfs",
         }
     }
 }
@@ -324,11 +351,13 @@ mod tests {
         let aws = StorageType::Aws;
         let azure = StorageType::Azure;
         let gcs = StorageType::Gcs;
+        let hdfs = StorageType::Hdfs;
 
         assert_eq!(serde_json::to_string(&local).unwrap(), "\"local\"");
         assert_eq!(serde_json::to_string(&aws).unwrap(), "\"aws\"");
         assert_eq!(serde_json::to_string(&azure).unwrap(), "\"azure\"");
         assert_eq!(serde_json::to_string(&gcs).unwrap(), "\"gcs\"");
+        assert_eq!(serde_json::to_string(&hdfs).unwrap(), "\"hdfs\"");
     }
 
     #[test]
@@ -338,11 +367,13 @@ mod tests {
         let aws: StorageType = serde_json::from_str("\"aws\"").unwrap();
         let azure: StorageType = serde_json::from_str("\"azure\"").unwrap();
         let gcs: StorageType = serde_json::from_str("\"gcs\"").unwrap();
+        let hdfs: StorageType = serde_json::from_str("\"hdfs\"").unwrap();
 
         assert_eq!(local, StorageType::Local);
         assert_eq!(aws, StorageType::Aws);
         assert_eq!(azure, StorageType::Azure);
         assert_eq!(gcs, StorageType::Gcs);
+        assert_eq!(hdfs, StorageType::Hdfs);
     }
 
     #[test]
@@ -407,6 +438,9 @@ mod tests {
 
         let config = StorageConfig::try_new("gcp").unwrap();
         assert_eq!(config.storage_type, StorageType::Gcs);
+
+        let config = StorageConfig::try_new("hdfs").unwrap();
+        assert_eq!(config.storage_type, StorageType::Hdfs);
     }
 
     #[test]
@@ -446,6 +480,14 @@ mod tests {
         assert_eq!(config.storage_type, StorageType::Gcs);
         // GCS has empty options by default
         assert!(config.options.is_empty());
+    }
+
+    #[test]
+    fn test_storage_config_hdfs() {
+        let config = StorageConfig::hdfs();
+        assert_eq!(config.storage_type, StorageType::Hdfs);
+        assert!(!config.options.is_empty());
+        assert_eq!(config.storage_type_str(), "hdfs");
     }
 
     #[test]
@@ -503,6 +545,7 @@ mod tests {
         assert_eq!(StorageConfig::aws().storage_type_str(), "aws");
         assert_eq!(StorageConfig::azure().storage_type_str(), "azure");
         assert_eq!(StorageConfig::gcs().storage_type_str(), "gcs");
+        assert_eq!(StorageConfig::hdfs().storage_type_str(), "hdfs");
     }
 
     #[test]
@@ -511,11 +554,13 @@ mod tests {
         let aws_str: String = StorageConfig::aws().into();
         let azure_str: String = StorageConfig::azure().into();
         let gcs_str: String = StorageConfig::gcs().into();
+        let hdfs_str: String = StorageConfig::hdfs().into();
 
         assert_eq!(local_str, "local");
         assert_eq!(aws_str, "aws");
         assert_eq!(azure_str, "azure");
         assert_eq!(gcs_str, "gcs");
+        assert_eq!(hdfs_str, "hdfs");
     }
 
     #[test]

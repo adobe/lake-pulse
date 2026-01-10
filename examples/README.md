@@ -7,7 +7,7 @@ This is a folder where some examples are provided to understand the use of the l
 Some tables need to be created, some are easy to create, some are not. The `data/README.md` file
 contains instructions on how to create the tables.
 
-For Azure ADLS and AWS S3 storage examples you will need to provide the needed credentials.
+For Azure ADLS, AWS S3, and HDFS storage examples you will need to provide the needed credentials or access to the respective storage systems.
 
 ## Run the Examples
 

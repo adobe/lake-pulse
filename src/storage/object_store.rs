@@ -18,6 +18,7 @@ use crate::util::retry::retry_with_max_retries;
 use async_trait::async_trait;
 use bytes::Bytes;
 use futures::stream::StreamExt;
+use hdfs_native_object_store::HdfsObjectStoreBuilder;
 use object_store::{
     aws::AmazonS3Builder, azure::MicrosoftAzureBuilder, gcp::GoogleCloudStorageBuilder,
     local::LocalFileSystem, ClientOptions, ObjectStore, ObjectStoreExt, RetryConfig,
@@ -90,6 +91,7 @@ impl ObjectStoreProvider {
             StorageType::Aws => Self::build_aws_store(config),
             StorageType::Azure => Self::build_azure_store(config),
             StorageType::Gcs => Self::build_gcs_store(config),
+            StorageType::Hdfs => Self::build_hdfs_store(config),
         }
     }
 
@@ -500,6 +502,38 @@ impl ObjectStoreProvider {
         };
 
         Ok((Box::new(store), base_url))
+    }
+
+    /// Build an HDFS store.
+    ///
+    /// # Arguments
+    ///
+    /// * `config` - Storage configuration with HDFS options (url)
+    ///
+    /// # Returns
+    ///
+    /// A `Result` containing:
+    /// * `Ok((Box<dyn ObjectStore>, String))` - A tuple of the HDFS store and base HDFS URL
+    /// * `Err(StorageError)` - If the HDFS store cannot be created
+    ///
+    /// # Errors
+    ///
+    /// This function will return an error if:
+    /// * The 'url' option is missing from configuration
+    /// * The HDFS store cannot be initialized (e.g., invalid URL, connection issues)
+    fn build_hdfs_store(config: &StorageConfig) -> StorageResult<(Box<dyn ObjectStore>, String)> {
+        let url = config.options.get("url").ok_or_else(|| {
+            StorageError::ConfigError("HDFS storage requires 'url' option".to_string())
+        })?;
+
+        let store = HdfsObjectStoreBuilder::new()
+            .with_url(url)
+            .build()
+            .map_err(|e| {
+                StorageError::ConfigError(format!("Failed to create HDFS store: {}", e))
+            })?;
+
+        Ok((Box::new(store), url.clone()))
     }
 
     /// List multiple partitions in parallel with bounded concurrency.
@@ -1564,5 +1598,124 @@ mod tests {
         let debug_str = format!("{:?}", provider);
         assert!(debug_str.contains("StorageProvider"));
         assert!(debug_str.contains("local"));
+    }
+
+    #[tokio::test]
+    async fn test_hdfs_provider_missing_url() {
+        // HDFS requires a 'url' option - test that missing URL returns appropriate error
+        let config = StorageConfig::hdfs();
+        let provider = ObjectStoreProvider::new(config).await;
+
+        assert!(provider.is_err());
+        match provider {
+            Err(StorageError::ConfigError(msg)) => {
+                assert!(
+                    msg.contains("HDFS storage requires 'url' option"),
+                    "Expected error about missing URL, got: {}",
+                    msg
+                );
+            }
+            _ => panic!("Expected ConfigError for missing HDFS URL"),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_hdfs_provider_invalid_url() {
+        // Test with an invalid HDFS URL format
+        let config = StorageConfig::hdfs().with_option("url", "not-a-valid-hdfs-url");
+        let provider = ObjectStoreProvider::new(config).await;
+
+        assert!(provider.is_err());
+        match provider {
+            Err(StorageError::ConfigError(msg)) => {
+                assert!(
+                    msg.contains("Failed to create HDFS store"),
+                    "Expected error about HDFS store creation failure, got: {}",
+                    msg
+                );
+            }
+            _ => panic!("Expected ConfigError for invalid HDFS URL"),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_hdfs_provider_unreachable_namenode() {
+        // Test with a valid URL format but unreachable namenode
+        // This tests the error handling when HDFS connection fails
+        let config = StorageConfig::hdfs().with_option("url", "hdfs://nonexistent-namenode:8020");
+        let provider = ObjectStoreProvider::new(config).await;
+
+        // The provider creation may succeed (lazy connection) or fail immediately
+        // depending on the hdfs-native-object-store implementation
+        // Either outcome is acceptable - we're testing that it doesn't panic
+        match provider {
+            Ok(_) => {
+                // Lazy connection - provider created but will fail on first operation
+                // This is acceptable behavior
+            }
+            Err(StorageError::ConfigError(msg)) => {
+                // Eager connection failure - also acceptable
+                assert!(
+                    msg.contains("Failed to create HDFS store"),
+                    "Expected HDFS store creation error, got: {}",
+                    msg
+                );
+            }
+            Err(e) => panic!("Unexpected error type: {:?}", e),
+        }
+    }
+
+    #[test]
+    fn test_build_hdfs_store_missing_url() {
+        // Direct test of build_hdfs_store with missing URL
+        let config = StorageConfig::hdfs();
+        let result = ObjectStoreProvider::build_hdfs_store(&config);
+
+        assert!(result.is_err());
+        match result {
+            Err(StorageError::ConfigError(msg)) => {
+                assert!(msg.contains("HDFS storage requires 'url' option"));
+            }
+            _ => panic!("Expected ConfigError for missing URL"),
+        }
+    }
+
+    #[test]
+    fn test_build_hdfs_store_invalid_url() {
+        // Direct test of build_hdfs_store with invalid URL
+        let config = StorageConfig::hdfs().with_option("url", "invalid://not-hdfs");
+        let result = ObjectStoreProvider::build_hdfs_store(&config);
+
+        assert!(result.is_err());
+        match result {
+            Err(StorageError::ConfigError(msg)) => {
+                assert!(
+                    msg.contains("Failed to create HDFS store"),
+                    "Expected HDFS creation error, got: {}",
+                    msg
+                );
+            }
+            _ => panic!("Expected ConfigError for invalid URL"),
+        }
+    }
+
+    #[test]
+    fn test_build_hdfs_store_empty_url() {
+        // Test with empty URL string
+        let config = StorageConfig::hdfs().with_option("url", "");
+        let result = ObjectStoreProvider::build_hdfs_store(&config);
+
+        // Empty URL should fail during HDFS store creation
+        assert!(result.is_err());
+        match result {
+            Err(StorageError::ConfigError(msg)) => {
+                assert!(
+                    msg.contains("Failed to create HDFS store"),
+                    "Expected HDFS creation error for empty URL, got: {}",
+                    msg
+                );
+            }
+            _ => panic!("Expected ConfigError for empty URL"),
+        }
     }
 }
