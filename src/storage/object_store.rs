@@ -21,7 +21,8 @@ use futures::stream::StreamExt;
 use hdfs_native_object_store::HdfsObjectStoreBuilder;
 use object_store::{
     aws::AmazonS3Builder, azure::MicrosoftAzureBuilder, gcp::GoogleCloudStorageBuilder,
-    local::LocalFileSystem, ClientOptions, ObjectStore, ObjectStoreExt, RetryConfig,
+    http::HttpBuilder, local::LocalFileSystem, ClientOptions, ObjectStore, ObjectStoreExt,
+    RetryConfig,
 };
 use std::collections::HashMap;
 use std::fmt::{Debug, Formatter};
@@ -92,6 +93,7 @@ impl ObjectStoreProvider {
             StorageType::Azure => Self::build_azure_store(config),
             StorageType::Gcs => Self::build_gcs_store(config),
             StorageType::Hdfs => Self::build_hdfs_store(config),
+            StorageType::Http => Self::build_http_store(config),
         }
     }
 
@@ -532,6 +534,45 @@ impl ObjectStoreProvider {
             .map_err(|e| {
                 StorageError::ConfigError(format!("Failed to create HDFS store: {}", e))
             })?;
+
+        Ok((Box::new(store), url.clone()))
+    }
+
+    /// Build an HTTP/WebDAV store.
+    ///
+    /// # Arguments
+    ///
+    /// * `config` - Storage configuration with HTTP options (url)
+    ///
+    /// # Returns
+    ///
+    /// A `Result` containing:
+    /// * `Ok((Box<dyn ObjectStore>, String))` - A tuple of the HTTP store and base URL
+    /// * `Err(StorageError)` - If the HTTP store cannot be created
+    ///
+    /// # Errors
+    ///
+    /// This function will return an error if:
+    /// * The 'url' option is missing from configuration
+    /// * The HTTP store cannot be initialized (e.g., invalid URL)
+    ///
+    /// # Notes
+    ///
+    /// This store supports both basic HTTP servers (read-only via GET) and
+    /// WebDAV-compliant servers (full read/write/list operations via RFC 2518).
+    fn build_http_store(config: &StorageConfig) -> StorageResult<(Box<dyn ObjectStore>, String)> {
+        let url = config.options.get("url").ok_or_else(|| {
+            StorageError::ConfigError("HTTP storage requires 'url' option".to_string())
+        })?;
+
+        let builder = HttpBuilder::new()
+            .with_url(url)
+            .with_client_options(Self::build_connection_options(config))
+            .with_retry(Self::build_retry_options(config));
+
+        let store = builder.build().map_err(|e| {
+            StorageError::ConfigError(format!("Failed to create HTTP store: {}", e))
+        })?;
 
         Ok((Box::new(store), url.clone()))
     }
@@ -1717,5 +1758,42 @@ mod tests {
             }
             _ => panic!("Expected ConfigError for empty URL"),
         }
+    }
+
+    #[test]
+    fn test_build_http_store_missing_url() {
+        // Direct test of build_http_store with missing URL
+        let config = StorageConfig::http();
+        let result = ObjectStoreProvider::build_http_store(&config);
+
+        assert!(result.is_err());
+        match result {
+            Err(StorageError::ConfigError(msg)) => {
+                assert!(msg.contains("HTTP storage requires 'url' option"));
+            }
+            _ => panic!("Expected ConfigError for missing URL"),
+        }
+    }
+
+    #[test]
+    fn test_build_http_store_valid_url() {
+        // Test with valid HTTP URL
+        let config = StorageConfig::http().with_option("url", "https://example.com/files");
+        let result = ObjectStoreProvider::build_http_store(&config);
+
+        assert!(result.is_ok());
+        let (_, base_url) = result.unwrap();
+        assert_eq!(base_url, "https://example.com/files");
+    }
+
+    #[test]
+    fn test_build_http_store_webdav_url() {
+        // Test with WebDAV URL
+        let config = StorageConfig::http().with_option("url", "https://webdav.example.com/dav");
+        let result = ObjectStoreProvider::build_http_store(&config);
+
+        assert!(result.is_ok());
+        let (_, base_url) = result.unwrap();
+        assert_eq!(base_url, "https://webdav.example.com/dav");
     }
 }

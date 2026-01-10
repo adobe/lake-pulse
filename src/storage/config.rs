@@ -29,6 +29,8 @@ pub enum StorageType {
     Gcs,
     /// Hadoop Distributed File System
     Hdfs,
+    /// HTTP/WebDAV storage
+    Http,
 }
 
 /// Generic configuration for storage providers using object_store
@@ -85,6 +87,14 @@ pub enum StorageType {
 /// let config = StorageConfig::new("hdfs")
 ///     .with_option("url", "hdfs://namenode:9000");
 /// ```
+///
+/// ## HTTP/WebDAV
+/// ```
+/// use lake_pulse::storage::StorageConfig;
+///
+/// let config = StorageConfig::http()
+///     .with_option("url", "https://webdav.example.com/files");
+/// ```
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct StorageConfig {
     /// Storage provider type
@@ -124,6 +134,9 @@ pub struct StorageConfig {
     ///
     /// HDFS:
     /// - url: HDFS namenode URL (e.g., "hdfs://namenode:9000")
+    ///
+    /// HTTP/WebDAV:
+    /// - url: Base URL of the HTTP/WebDAV server (e.g., "https://webdav.example.com/files")
     #[serde(default)]
     pub options: HashMap<String, String>,
 }
@@ -179,6 +192,7 @@ impl StorageConfig {
             "azure" => StorageType::Azure,
             "gcs" | "gcp" => StorageType::Gcs,
             "hdfs" => StorageType::Hdfs,
+            "http" | "webdav" => StorageType::Http,
             _ => {
                 return Err(StorageError::ConfigError(format!(
                     "Unknown storage type: {}",
@@ -253,6 +267,25 @@ impl StorageConfig {
         }
     }
 
+    /// Create an HTTP/WebDAV storage configuration.
+    ///
+    /// This storage type supports both basic HTTP servers (read-only) and
+    /// WebDAV-compliant servers (full read/write/list operations).
+    ///
+    /// # Returns
+    ///
+    /// A new `StorageConfig` instance configured for HTTP/WebDAV access with default options.
+    ///
+    /// # Required Options
+    ///
+    /// - `url`: Base URL of the HTTP/WebDAV server (e.g., "https://webdav.example.com/files")
+    pub fn http() -> Self {
+        Self {
+            storage_type: StorageType::Http,
+            options: Self::default_options(),
+        }
+    }
+
     /// Get default options for all storage types.
     ///
     /// # Returns
@@ -322,7 +355,7 @@ impl StorageConfig {
     ///
     /// # Returns
     ///
-    /// A string slice representing the storage type ("local", "aws", "azure", "gcs", or "hdfs").
+    /// A string slice representing the storage type ("local", "aws", "azure", "gcs", "hdfs", or "http").
     pub fn storage_type_str(&self) -> &str {
         match self.storage_type {
             StorageType::Local => "local",
@@ -330,6 +363,7 @@ impl StorageConfig {
             StorageType::Azure => "azure",
             StorageType::Gcs => "gcs",
             StorageType::Hdfs => "hdfs",
+            StorageType::Http => "http",
         }
     }
 }
@@ -352,12 +386,14 @@ mod tests {
         let azure = StorageType::Azure;
         let gcs = StorageType::Gcs;
         let hdfs = StorageType::Hdfs;
+        let http = StorageType::Http;
 
         assert_eq!(serde_json::to_string(&local).unwrap(), "\"local\"");
         assert_eq!(serde_json::to_string(&aws).unwrap(), "\"aws\"");
         assert_eq!(serde_json::to_string(&azure).unwrap(), "\"azure\"");
         assert_eq!(serde_json::to_string(&gcs).unwrap(), "\"gcs\"");
         assert_eq!(serde_json::to_string(&hdfs).unwrap(), "\"hdfs\"");
+        assert_eq!(serde_json::to_string(&http).unwrap(), "\"http\"");
     }
 
     #[test]
@@ -368,12 +404,14 @@ mod tests {
         let azure: StorageType = serde_json::from_str("\"azure\"").unwrap();
         let gcs: StorageType = serde_json::from_str("\"gcs\"").unwrap();
         let hdfs: StorageType = serde_json::from_str("\"hdfs\"").unwrap();
+        let http: StorageType = serde_json::from_str("\"http\"").unwrap();
 
         assert_eq!(local, StorageType::Local);
         assert_eq!(aws, StorageType::Aws);
         assert_eq!(azure, StorageType::Azure);
         assert_eq!(gcs, StorageType::Gcs);
         assert_eq!(hdfs, StorageType::Hdfs);
+        assert_eq!(http, StorageType::Http);
     }
 
     #[test]
@@ -441,6 +479,12 @@ mod tests {
 
         let config = StorageConfig::try_new("hdfs").unwrap();
         assert_eq!(config.storage_type, StorageType::Hdfs);
+
+        let config = StorageConfig::try_new("http").unwrap();
+        assert_eq!(config.storage_type, StorageType::Http);
+
+        let config = StorageConfig::try_new("webdav").unwrap();
+        assert_eq!(config.storage_type, StorageType::Http);
     }
 
     #[test]
@@ -488,6 +532,14 @@ mod tests {
         assert_eq!(config.storage_type, StorageType::Hdfs);
         assert!(!config.options.is_empty());
         assert_eq!(config.storage_type_str(), "hdfs");
+    }
+
+    #[test]
+    fn test_storage_config_http() {
+        let config = StorageConfig::http();
+        assert_eq!(config.storage_type, StorageType::Http);
+        assert!(!config.options.is_empty());
+        assert_eq!(config.storage_type_str(), "http");
     }
 
     #[test]
@@ -546,6 +598,7 @@ mod tests {
         assert_eq!(StorageConfig::azure().storage_type_str(), "azure");
         assert_eq!(StorageConfig::gcs().storage_type_str(), "gcs");
         assert_eq!(StorageConfig::hdfs().storage_type_str(), "hdfs");
+        assert_eq!(StorageConfig::http().storage_type_str(), "http");
     }
 
     #[test]
@@ -555,12 +608,14 @@ mod tests {
         let azure_str: String = StorageConfig::azure().into();
         let gcs_str: String = StorageConfig::gcs().into();
         let hdfs_str: String = StorageConfig::hdfs().into();
+        let http_str: String = StorageConfig::http().into();
 
         assert_eq!(local_str, "local");
         assert_eq!(aws_str, "aws");
         assert_eq!(azure_str, "azure");
         assert_eq!(gcs_str, "gcs");
         assert_eq!(hdfs_str, "hdfs");
+        assert_eq!(http_str, "http");
     }
 
     #[test]
