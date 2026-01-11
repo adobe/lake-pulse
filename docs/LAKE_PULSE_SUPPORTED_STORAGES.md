@@ -16,7 +16,10 @@
     <tr>
       <td>HTTP/WebDAV</td>
       <td style="text-align: center;">✅</td>
-      <td>WebDAV extends HTTP with file operations (RFC 2518)</td>
+      <td>
+        WebDAV extends HTTP with file operations (RFC 2518)<br/>
+        <a href="https://docs.rs/object_store/latest/object_store/http/enum.HttpConfigKey.html">HTTP/WebDAV Configuration</a>
+      </td>
     </tr>
     <tr>
       <td>FTP</td>
@@ -35,22 +38,31 @@
     <tr>
       <td>AWS S3 (and compatible)</td>
       <td style="text-align: center;">✅</td>
-      <td></td>
+      <td>
+        See <a href="https://docs.rs/object_store/latest/object_store/aws/enum.AmazonS3ConfigKey.html">AWS S3 Configuration</a>
+      </td>
     </tr>
     <tr>
       <td>Azure Blob Storage</td>
       <td style="text-align: center;">✅</td>
-      <td></td>
+      <td>
+        See <a href="https://docs.rs/object_store/latest/object_store/azure/enum.AzureConfigKey.html">Azure Configuration</a>
+      </td>
     </tr>
     <tr>
       <td>Azure Data Lake Storage Gen2</td>
       <td style="text-align: center;">✅</td>
-      <td>Supports both standard and Fabric endpoints</td>
+      <td>
+        Supports both standard and Fabric endpoints<br/>
+        See <a href="https://docs.rs/object_store/latest/object_store/azure/enum.AzureConfigKey.html">Azure Configuration</a>
+      </td>
     </tr>
     <tr>
       <td>Google Cloud Storage</td>
       <td style="text-align: center;">✅</td>
-      <td></td>
+      <td>
+        See <a href="https://docs.rs/object_store/latest/object_store/gcp/enum.GoogleConfigKey.html">GCP Configuration</a>
+      </td>
     </tr>
     <!-- Other Cloud Object Storage -->
     <tr>
@@ -59,42 +71,66 @@
     <tr>
       <td>Alibaba Cloud OSS</td>
       <td style="text-align: center;">✅</td>
-      <td>Use AWS config with custom <code>endpoint</code></td>
+      <td>
+        Use AWS config with custom <code>endpoint</code><br/>
+        See <a href="https://docs.rs/object_store/latest/object_store/aws/enum.AmazonS3ConfigKey.html">AWS S3 Configuration</a>
+      </td>
     </tr>
     <tr>
       <td>Backblaze B2</td>
       <td style="text-align: center;">✅</td>
-      <td>Use AWS config with custom <code>endpoint</code></td>
+      <td>
+        Use AWS config with custom <code>endpoint</code><br/>
+        See <a href="https://docs.rs/object_store/latest/object_store/aws/enum.AmazonS3ConfigKey.html">AWS S3 Configuration</a>
+      </td>
     </tr>
     <tr>
       <td>Ceph</td>
       <td style="text-align: center;">✅</td>
-      <td>Use AWS config with custom <code>endpoint</code></td>
+      <td>
+        Use AWS config with custom <code>endpoint</code><br/>
+        See <a href="https://docs.rs/object_store/latest/object_store/aws/enum.AmazonS3ConfigKey.html">AWS S3 Configuration</a>
+      </td>
     </tr>
     <tr>
       <td>Cloudflare R2</td>
       <td style="text-align: center;">✅</td>
-      <td>Use AWS config with custom <code>endpoint</code></td>
+      <td>
+        Use AWS config with custom <code>endpoint</code><br/>
+        See <a href="https://docs.rs/object_store/latest/object_store/aws/enum.AmazonS3ConfigKey.html">AWS S3 Configuration</a>
+      </td>
     </tr>
     <tr>
       <td>Huawei OBS</td>
       <td style="text-align: center;">✅</td>
-      <td>Use AWS config with custom <code>endpoint</code></td>
+      <td>
+        Use AWS config with custom <code>endpoint</code><br/>
+        See <a href="https://docs.rs/object_store/latest/object_store/aws/enum.AmazonS3ConfigKey.html">AWS S3 Configuration</a>
+      </td>
     </tr>
     <tr>
       <td>MinIO</td>
       <td style="text-align: center;">✅</td>
-      <td>Use AWS config with custom <code>endpoint</code></td>
+      <td>
+        Use AWS config with custom <code>endpoint</code><br/>
+        See <a href="https://docs.rs/object_store/latest/object_store/aws/enum.AmazonS3ConfigKey.html">AWS S3 Configuration</a>
+      </td>
     </tr>
     <tr>
       <td>OpenStack Swift</td>
       <td style="text-align: center;">✅</td>
-      <td>Use AWS config with custom <code>endpoint</code></td>
+      <td>
+        Use AWS config with custom <code>endpoint</code><br/>
+        See <a href="https://docs.rs/object_store/latest/object_store/aws/enum.AmazonS3ConfigKey.html">AWS S3 Configuration</a>
+      </td>
     </tr>
     <tr>
       <td>Tencent Cloud COS</td>
       <td style="text-align: center;">✅</td>
-      <td>Use AWS config with custom <code>endpoint</code></td>
+      <td>
+        Use AWS config with custom <code>endpoint</code><br/>
+        See <a href="https://docs.rs/object_store/latest/object_store/aws/enum.AmazonS3ConfigKey.html">AWS S3 Configuration</a>
+      </td>
     </tr>
     <tr>
       <td>Upyun</td>
@@ -118,7 +154,10 @@
     <tr>
       <td>HDFS</td>
       <td style="text-align: center;">✅</td>
-      <td>Via <code>hdfs-native-object-store</code> crate</td>
+      <td>
+        Via <code>hdfs-native-object-store</code> crate<br/> 
+        See <a href="https://docs.rs/hdfs-native-object-store/latest/hdfs_native_object_store/">HDFS Configuration</a> 
+      </td>
     </tr>
     <tr>
       <td>Alluxio</td>

@@ -184,6 +184,7 @@ For detailed information on configuration options, refer to the `object_store` c
 - [AWS S3 Configuration](https://docs.rs/object_store/latest/object_store/aws/enum.AmazonS3ConfigKey.html)
 - [Azure Configuration](https://docs.rs/object_store/latest/object_store/azure/enum.AzureConfigKey.html)
 - [GCP Configuration](https://docs.rs/object_store/latest/object_store/gcp/enum.GoogleConfigKey.html)
+- [HDFS Configuration](https://docs.rs/hdfs-native-object-store/latest/hdfs_native_object_store/)
 
 ## Supported Storages
 
