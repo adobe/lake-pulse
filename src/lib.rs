@@ -22,7 +22,7 @@
 //! ## Features
 //!
 //! - **Multi-format support**: Delta Lake, Apache Iceberg, Apache Hudi, Lance
-//! - **Cloud storage**: AWS S3, Azure Data Lake Storage, Google Cloud Storage, Local filesystem
+//! - **Cloud storage**: AWS S3, Azure Data Lake Storage, Google Cloud Storage, HDFS, HTTP/WebDAV, Local filesystem
 //! - **Health metrics**: File size distribution, partition analysis, data skew detection
 //! - **Advanced analysis**: Schema evolution, time travel metrics, deletion vectors, compaction opportunities
 //! - **Performance tracking**: Built-in timing metrics with Gantt chart visualization

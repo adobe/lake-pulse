@@ -30,8 +30,11 @@ All submissions should come in the form of pull requests and need to be reviewed
 by project committers. Read [GitHub's pull request documentation](https://help.github.com/articles/about-pull-requests/)
 for more information on sending pull requests.
 
-Lastly, please follow the [pull request template](PULL_REQUEST_TEMPLATE.md) when
-submitting a pull request!
+Code submissions will need to pass all automated tests in place at the time of submission.
+These include such things as Rust code format, Clippy/lint checks, and unit test coverage.
+
+We encourage you to raise an issue in GitHub before starting work on a major addition to the crate.
+This will give us an opportunity to discuss API design and avoid duplicate efforts.
 
 ## From Contributor To Committer
 
