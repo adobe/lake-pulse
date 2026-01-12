@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.1](https://github.com/adobe/lake-pulse/compare/v0.2.0...v0.2.1) - 2026-01-12
+
+### Documentation
+
+- Fix the table formats badges
+- Minor updates
+- Minor improvements on docs
+
 ## [0.2.0](https://github.com/adobe/lake-pulse/compare/v0.1.4...v0.2.0) - 2026-01-10
 
 ### Added
