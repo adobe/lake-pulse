@@ -16,7 +16,9 @@ exclude = [ "examples/data/**/*" ]
 default = []
 hudi = []
 lance = ["dep:lance", "dep:lance-index"]
-all = ["hudi", "lance"]
+paimon = ["dep:apache-avro"]
+experimental = ["hudi", "lance", "paimon"]
+all = ["hudi", "lance", "paimon"]
 
 [dependencies]
 tokio = { version = "1", features = ["full"] }
@@ -56,3 +58,7 @@ required-features = ["hudi"]
 [[example]]
 name = "local_store_lance"
 required-features = ["lance"]
+
+[[example]]
+name = "local_store_paimon"
+required-features = ["paimon"]

@@ -32,6 +32,7 @@ A Rust library for analyzing data lake table health — *checking the pulse* —
 [![Apache Iceberg][iceberg-badge]][iceberg-link]
 [![Apache Hudi][hudi-badge]][hudi-link]
 [![Lance][lance-badge]][lance-link]
+[![Apache Paimon][paimon-badge]][paimon-link]
 
 [delta-badge]: https://img.shields.io/badge/Delta_Lake-00acd3?style=for-the-badge&logo=data:image/svg%2bxml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCA2MDAgNjAwIiB3aWR0aD0iMTQiIGhlaWdodD0iMTQiPgogIDxwYXRoIGZpbGw9IiNmZmZmZmYiIGQ9Ik0zMTEsMGM2LjA3LDEsOC4xLDMuNjgsMTEuNTYsOC42Miw4OC43MiwxNTIuMjIsMTc4Ljg0LDMwNi40NywyNzAuMzcsNDYyLjc2LDMuNTIsNi40NSw1Ljg4LDEzLjMzLDcuMDcsMjAuNjN2MThjLTIuMTUsMjIuMjUtMjUuODQsMzUuOTgtNDQuMSw0NS4zMi0zMC41NCwxNS42Mi02NC4yNiwyNS43OS05Ny45LDI2LjY4aC0zMmMtMjcuNjEtLjQ4LTU0LjYtOS43MS04MC43NS0yMS44NC0zMC42My0xNS4yMy02MS42NC0yOS41OC05My4wMy00My4wNS04MC41Ni0zMy44LTE3MC45My00LjgyLTI0My40OCwzMy00Ljk1LDEuOTctNy44NywxLjI3LTguNzMtMi4xMXYtNmMzMC42NC00NS4xLDY4LjU2LTg0LjUsMTIwLjc1LTEwMy43NSw1Ny41NS0yMS4yMywxMTYuMy0xNi4zOSwxNzEuNjEsOC44OSwxNC44MSw2Ljc3LDI4LjIsMTYuMDEsNDIuNjIsMjMuMzgsNDAuMywyMC42MSw4NS44OSwzMy4yOCwxMzEuMiwyMy4xNiwxMC45LTIuNDMsMjguMDEtNS40MywyMS4yLTIwLjU3LTU5LjU4LTk2LjczLTExMi4xMS0xOTguNDctMTcyLjIxLTI5NC43OS01LjAzLTguMDYtOS43My0xNS42My0xNy41OC00LjI0LTMyLjY4LDQ3LjQtNTcuNjgsMTA0LjktODkuNzYsMTUzLjIzLTEuNDYsMy4xNi0zLjc5LDUuNzkuNTgsNy43Nyw0LjEyLDEuODcsMTMuNDMsMi44OCwxOC41OSw0LjQxLDMyLjQsOS41OSw2My4xNSwyNS4zOSw4OS40Nyw0Ni41MywzLjc3LDMuMDMsMjEuMDksMTcuNzksMjIuMDgsMjAuOTEsMi4yNyw3LjIxLTIuNDgsMTIuNzQtOS44LDExLjg3LTgwLjM4LTQyLjU1LTE2Ny41Ny0zMS4yNS0yNTAuMjctMi44My05LjIyLDMuMTctMjIuMDMsMTEuOTEtMjIuNDQtNS40QzEzNC4wMSwyNzQuOCwyMTMuODQsMTM5LjkxLDI5Mi45OCw0Ljc2bDcuMDItNC43NmgxMVoiLz4KPC9zdmc+Cg==
 [delta-link]: https://github.com/delta-io/delta
@@ -41,6 +42,8 @@ A Rust library for analyzing data lake table health — *checking the pulse* —
 [hudi-link]: https://github.com/apache/hudi
 [lance-badge]: https://img.shields.io/badge/Lance-ff734a?style=for-the-badge&logo=data:image/svg%2bxml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAyMzAgMjMwIiB3aWR0aD0iMTQiIGhlaWdodD0iMTQiPgogIDxwYXRoIGZpbGw9IiNmZmZmZmYiIGQ9Ik01OS4wMSwyNC45OWw4LjQ5LTExLjk5QzgzLjg0LS4wOSwxMDUuNjQsNS44LDExMy41LDI0Ljk5YzIuOTQtMTAuNjcsMTQuMDEtMTguMzgsMjQuOTYtMTkuMDMsMjcuMjEtMS42LDM5LjkxLDMzLjIxLDE4Ljg2LDQ5Ljg2bC05LjMyLDUuMTZjOS4yLDEuNSwxNS43MSw5LjYsMTguNDksMTguMDIsMTIuMDktMzIuNDYsNTkuMTEtMjIuMDUsNTQuNDIsMTMuNDEtMi45MiwyMi4wMy0zMy4wNCwzMC4yMy00Ny45NCwxNC4xMS0zLjE5LTMuNDYtNC4wNC03LjI1LTYuOTYtMTAuNTItMS42NCw3Ljk1LTkuMDMsMTUuMzYtMTcuMDEsMTcuMDEsNy41Myw1LjE4LDEzLjk0LDkuMTcsMTcuMTksMTguMywxMC4wNywyOC4zNy0yNS4wNyw0OS40OC00Ni4yMywyOS4yM2wtNi45NS0xMS41M2MtMi4yLDguNjktOS42LDE1LjQ5LTE4LjAxLDE4LjAxbDcuNDksMy45OWMxNi4xMywxMi4wMSwxNiwzNy45Mi0yLjQ0LDQ3LjU1LTM2LDE4Ljc5LTU5Ljk2LTM3LjI1LTIyLjA1LTUxLjA2LTcuNy0zLjAyLTE1LjQyLTkuMDYtMTcuMDItMTcuNWwtMS45OC43Yy0xMC42OSwyNy43MS01MS42NywyMS44Ni01My44OS04LjMzLS44OC0xMS44Niw3LjA1LTI0LjgxLDE4Ljg5LTI3LjM4LTEuNTgtMi43Mi01LjA1LTMuMDktNy41LTQuOTktMTguMzYtMTQuMjUtMTMuODMtNDEuMTIsNy40OS00OS41QzUuOSw1My45Ny0xLjIzLDMxLjA0LDExLjQ4LDE1Ljk5LDI1LjM1LS40MSw1My4xMSwzLjc2LDU5LDI0Ljk5aC4wMVpNMTMxLDYwLjAxYy04LjI4LTIuMjgtMTUuNjctOS4zOC0xNy4wMS0xOC4wMWwtNC41Nyw3LjkxYy0xMi4wNSwxNS4xNi0zMy4xMSwxNi40MS00NS40MS41OC0xLjktMi40NC0yLjI3LTUuOTEtNC45OS03LjUtLjQ0LDMuNTEtMy4wNSw3LjUxLTUuNDcsMTAuMDQtMy4zNSwzLjQ5LTguMDUsNC45NS0xMS41NCw3Ljk1LDI1LjE3LDguMjMsMjUuMzUsNDQuNDMsMCw1Mi41MSw3LjY5LDQuMjQsMTQuODEsOS40LDE3LjAxLDE4LjVsNi4wMS05LjQ3YzExLjEyLTEyLjA5LDMxLjQ3LTEzLjQ2LDQyLjM5LS40NCwyLjU1LDMuMDUsMy43OCw3LjI0LDYuNTgsOS45MSwxLjE0LTguNTUsOS40Mi0xNC42MywxNy4wMS0xNy40OS0xNy4zNC03LjYzLTI1LjYtMjkuMTUtMTMtNDUsMy40NS00LjM0LDguODUtNi4xNCwxMy05LjQ5aDBaIi8+CiAgPGNpcmNsZSBmaWxsPSIjZmZmZmZmIiBjeD0iMTkzLjM3IiBjeT0iMTk0LjE4IiByPSIyNy45MSIvPgo8L3N2Zz4K
 [lance-link]: https://github.com/lancedb/lance
+[paimon-badge]: https://img.shields.io/badge/Apache_paimon-eeeeee?style=for-the-badge&logo=data:image/svg%2bxml;base64,PD94bWwgdmVyc2lvbj0iMS4wIiBlbmNvZGluZz0iVVRGLTgiPz4KPHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAzMDcuMzQgMjE4LjYxIj4KICA8ZGVmcz4KICAgIDxzdHlsZT4KICAgICAgLmNscy0xIHsKICAgICAgICBmaWxsOiAjMDY2NmZmOwogICAgICB9CiAgICA8L3N0eWxlPgogIDwvZGVmcz4KICA8Zz4KICAgIDxwYXRoIGNsYXNzPSJjbHMtMSIgZD0ibTMwNy4zNCw0Ni41NWwtNTAuMTksMTQuMWMuNDcuOTQuOTIsMS44OSwxLjM2LDIuODRsNDguODMtMTYuOTRaIi8+CiAgICA8cGF0aCBjbGFzcz0iY2xzLTEiIGQ9Im02Mi43MiwxNzAuNDdsLTEyLjYyLDI1LjY5SDBsMjIuOTksNC43MmM3LjU1LDEuNTUsMTQuMjgsNS44LDE4LjkzLDExLjk2bDIwLjE2LTIzLjZjMy43MS00LjE2LDcuNS04LjIzLDExLjM2LTEyLjI0LTIuOTctMy43Ni01LjY5LTcuNzEtOC4xNS0xMS44NC0uODYsMS43NC0xLjcyLDMuNTEtMi41Niw1LjMxWiIvPgogICAgPHBhdGggY2xhc3M9ImNscy0xIiBkPSJtMTA1LjU4LDExMS4yOGMtMy41MS0xMC4wNC0xMS40OS0xOC4xNS0yMS45NS0yMS42NWwtMTIuNzQtNC4yNmg4MC40YzE5Ljg1LTcuNDcsNDMuNi0xMy4wMiw3Mi41Ni0xNy4zOWwxOS42LTMuNDgsMTMuNy0zLjg1QzIzOS4yNSwyNC43LDIwMi4xNCwwLDE1OS4yNSwwLDk4Ljg5LDAsNDkuOTUsNDguOTQsNDkuOTUsMTA5LjNjMCwyMC40MSw1LjYsMzkuNTEsMTUuMzQsNTUuODUsMTEuMTMtMjIuNSwyMy44MS00MC4wNCw0MC4yOS01My44OFoiLz4KICAgIDxwYXRoIGNsYXNzPSJjbHMtMSIgZD0ibTIzMi4zNSw3Mi41N2MtNjAuMTEsMjIuNTMtMTE0LjQsNTguMjItMTU4LjkyLDEwNC40MywyMC4wMiwyNS4zNCw1MS4wMiw0MS42MSw4NS44Miw0MS42MSw2MC4zNywwLDEwOS4zLTQ4Ljk0LDEwOS4zLTEwOS4zLDAtMTYuMzYtMy42LTMxLjg4LTEwLjA0LTQ1LjgxbC0yNi4xNyw5LjA4WiIvPgogIDwvZz4KPC9zdmc+
+[paimon-link]: https://github.com/apache/paimon
 
 <!-- 
 The format badges are created using shields.io based on base64 encoded version of the SVG logo.
@@ -86,20 +89,22 @@ async fn main() {
 
 ## Supported Table Formats
 
-- **Delta Lake** - Full support for transaction logs, deletion vectors, and Delta-specific metrics
-- **Apache Iceberg** - Metadata analysis, snapshot management, and Iceberg-specific features
-- **Apache Hudi** - Basic support for Hudi table structure analysis and metrics *(requires `hudi` feature)*
-- **Lance** - Modern columnar format with vector search capabilities *(requires `lance` feature)*
+- **[Delta Lake](https://delta.io)** - Full support for transaction logs, deletion vectors, and Delta-specific metrics
+- **[Apache Iceberg](https://iceberg.apache.org)** - Metadata analysis, snapshot management, and Iceberg-specific features
+- **[Apache Hudi](https://hudi.apache.org)** - Basic support for Hudi table structure analysis and metrics *(requires `hudi` feature)*
+- **[Lance](https://lance.org)** - Modern columnar format with vector search capabilities *(requires `lance` feature)*
+- **[Apache Paimon](https://paimon.apache.org)** - Modern storage format for both batch and stream processing *(requires `paimon` feature)*
 
 ## Feature Flags
 
 By default, Lake Pulse includes support for **Delta Lake** and **Apache Iceberg**. Additional table formats can be enabled via feature flags:
 
-| Feature | Description |
-|---------|-------------|
-| `hudi` | Enables Apache Hudi support |
-| `lance` | Enables Lance support |
-| `all` | Enables all table formats (`hudi` + `lance`) |
+| Feature  | Description                                  |
+|----------|----------------------------------------------|
+| `hudi`   | Enables Apache Hudi support                  |
+| `lance`  | Enables Lance support                        |
+| `paimon` | Enables Apache Paimon support                |
+| `all`    | Enables all table formats (`hudi` + `lance`) |
 
 ### Usage
 
@@ -114,6 +119,9 @@ lake-pulse = { version = "0.2", features = ["hudi"] }
 
 # With Lance support
 lake-pulse = { version = "0.2", features = ["lance"] }
+
+# With Paimon support
+lake-pulse = { version = "0.2", features = ["paimon"] }
 
 # With all table formats (Delta + Iceberg + Hudi + Lance)
 lake-pulse = { version = "0.2", features = ["all"] }

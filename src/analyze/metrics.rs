@@ -17,6 +17,8 @@ use crate::reader::hudi::metrics::HudiMetrics;
 use crate::reader::iceberg::metrics::IcebergMetrics;
 #[cfg(feature = "lance")]
 use crate::reader::lance::metrics::LanceMetrics;
+#[cfg(feature = "paimon")]
+use crate::reader::paimon::metrics::PaimonMetrics;
 use crate::util::ascii_gantt::to_ascii_gantt;
 use crate::util::ascii_gantt::GanttConfig;
 use serde::{Deserialize, Serialize};
@@ -253,6 +255,9 @@ pub struct HealthMetrics {
     /// Lance specific metrics (requires `lance` feature)
     #[cfg(feature = "lance")]
     pub lance_table_specific_metrics: Option<LanceMetrics>,
+    /// Apache Paimon specific metrics (requires `paimon` feature)
+    #[cfg(feature = "paimon")]
+    pub paimon_table_specific_metrics: Option<PaimonMetrics>,
 }
 
 /// Distribution of files by size category.
@@ -1074,6 +1079,10 @@ impl Display for HealthReport {
         if let Some(ref lance_metrics) = report.metrics.lance_table_specific_metrics {
             write!(f, "{}", lance_metrics)?;
         }
+        #[cfg(feature = "paimon")]
+        if let Some(ref paimon_metrics) = report.metrics.paimon_table_specific_metrics {
+            write!(f, "{}", paimon_metrics)?;
+        }
 
         // Recommendations (full width)
         writeln!(f)?;
@@ -1168,6 +1177,8 @@ impl HealthMetrics {
             iceberg_table_specific_metrics: None,
             #[cfg(feature = "lance")]
             lance_table_specific_metrics: None,
+            #[cfg(feature = "paimon")]
+            paimon_table_specific_metrics: None,
         }
     }
 
