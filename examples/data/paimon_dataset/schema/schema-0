@@ -1,0 +1,26 @@
+{
+  "version" : 3,
+  "id" : 0,
+  "fields" : [ {
+    "id" : 0,
+    "name" : "id",
+    "type" : "BIGINT"
+  }, {
+    "id" : 1,
+    "name" : "f1",
+    "type" : "STRING"
+  }, {
+    "id" : 2,
+    "name" : "f2",
+    "type" : "INT"
+  }, {
+    "id" : 3,
+    "name" : "pt",
+    "type" : "STRING"
+  } ],
+  "highestFieldId" : 3,
+  "partitionKeys" : [ "pt" ],
+  "primaryKeys" : [ ],
+  "options" : { },
+  "timeMillis" : 1768638352008
+}
