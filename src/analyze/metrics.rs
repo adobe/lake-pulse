@@ -1327,13 +1327,29 @@ impl HealthMetrics {
         }
     }
 
-    pub fn calculate_snapshot_health(&mut self, snapshot_count: usize) {
+    pub fn calculate_snapshot_health(&mut self, fallback_snapshot_count: usize) {
+        // Use snapshot count from time_travel_metrics if available (set by table-specific analyzer),
+        // otherwise fall back to the provided count (typically metadata_files.len())
+        let snapshot_count = self
+            .time_travel_metrics
+            .as_ref()
+            .map(|ttm| ttm.total_snapshots)
+            .unwrap_or(fallback_snapshot_count);
+
         self.snapshot_health.snapshot_count = snapshot_count;
 
-        // Simplified snapshot age calculation (would need actual timestamps)
-        self.snapshot_health.oldest_snapshot_age_days = 0.0;
-        self.snapshot_health.newest_snapshot_age_days = 0.0;
-        self.snapshot_health.avg_snapshot_age_days = 0.0;
+        // Use age info from time_travel_metrics if available
+        if let Some(ref ttm) = self.time_travel_metrics {
+            self.snapshot_health.oldest_snapshot_age_days = ttm.oldest_snapshot_age_days;
+            self.snapshot_health.newest_snapshot_age_days = ttm.newest_snapshot_age_days;
+            self.snapshot_health.avg_snapshot_age_days =
+                (ttm.oldest_snapshot_age_days + ttm.newest_snapshot_age_days) / 2.0;
+        } else {
+            // Simplified snapshot age calculation (would need actual timestamps)
+            self.snapshot_health.oldest_snapshot_age_days = 0.0;
+            self.snapshot_health.newest_snapshot_age_days = 0.0;
+            self.snapshot_health.avg_snapshot_age_days = 0.0;
+        }
 
         // Calculate retention risk based on snapshot count
         if snapshot_count > 100 {
