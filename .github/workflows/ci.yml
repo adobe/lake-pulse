@@ -86,6 +86,11 @@ jobs:
       - name: Run clippy
         run: cargo clippy --all-targets --all-features --workspace -- -D warnings
 
+      - name: Check documentation
+        run: cargo doc --no-deps --all-features --workspace
+        env:
+          RUSTDOCFLAGS: "-D warnings"
+
   test:
     name: Test (${{ matrix.name }})
     needs: changes

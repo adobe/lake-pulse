@@ -22,6 +22,7 @@ on:
 
 permissions:
   contents: read
+  checks: write
 
 jobs:
   audit:
@@ -36,7 +37,42 @@ jobs:
         run: cargo generate-lockfile
 
       - name: Run cargo-audit
-        continue-on-error: true
-        uses: rustsec/audit-check@v2
+        id: audit
+        run: |
+          cargo install cargo-audit --locked
+          audit_exit_code=0
+          cargo audit 2>&1 | tee audit-output.txt; audit_exit_code=${PIPESTATUS[0]}
+          vuln_count=$(grep -oE '[0-9]+ vulnerabilit' audit-output.txt | grep -oE '[0-9]+' || echo "0")
+          warn_count=$(grep -oE '[0-9]+ allowed warning' audit-output.txt | grep -oE '[0-9]+' || echo "0")
+          echo "has_vulnerabilities=$( [ $audit_exit_code -ne 0 ] && echo true || echo false )" >> $GITHUB_OUTPUT
+          echo "vuln_count=$vuln_count" >> $GITHUB_OUTPUT
+          echo "warn_count=$warn_count" >> $GITHUB_OUTPUT
+
+      - name: Report audit results
+        uses: actions/github-script@v7
         with:
-          token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            const hasVulnerabilities = '${{ steps.audit.outputs.has_vulnerabilities }}' === 'true';
+            const vulnCount = parseInt('${{ steps.audit.outputs.vuln_count }}', 10) || 0;
+            const warnCount = parseInt('${{ steps.audit.outputs.warn_count }}', 10) || 0;
+
+            let summary = 'All dependencies passed security audit.';
+            if (hasVulnerabilities || warnCount > 0) {
+              const parts = [];
+              if (vulnCount > 0) parts.push(`${vulnCount} vulnerabilit${vulnCount === 1 ? 'y' : 'ies'}`);
+              if (warnCount > 0) parts.push(`${warnCount} warning${warnCount === 1 ? '' : 's'}`);
+              summary = `Found ${parts.join(' and ')} in dependencies.`;
+            }
+
+            await github.rest.checks.create({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              name: 'Security Audit',
+              head_sha: context.sha,
+              status: 'completed',
+              conclusion: hasVulnerabilities ? 'neutral' : 'success',
+              output: {
+                title: hasVulnerabilities ? `⚠️ Security issue found (${vulnCount} vulnerabilit${vulnCount === 1 ? 'y' : 'ies'}/${warnCount} warning${warnCount === 1 ? '' : 's'})` : '✅ No issues found',
+                summary: summary
+              }
+            });

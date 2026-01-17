@@ -136,7 +136,7 @@ pub struct StorageConfig {
     /// - url: HDFS namenode URL (e.g., "hdfs://namenode:9000")
     ///
     /// HTTP/WebDAV:
-    /// - url: Base URL of the HTTP/WebDAV server (e.g., "https://webdav.example.com/files")
+    /// - url: Base URL of the HTTP/WebDAV server (e.g., `https://webdav.example.com/files`)
     #[serde(default)]
     pub options: HashMap<String, String>,
 }
@@ -278,7 +278,7 @@ impl StorageConfig {
     ///
     /// # Required Options
     ///
-    /// - `url`: Base URL of the HTTP/WebDAV server (e.g., "https://webdav.example.com/files")
+    /// - `url`: Base URL of the HTTP/WebDAV server (e.g., `https://webdav.example.com/files`)
     pub fn http() -> Self {
         Self {
             storage_type: StorageType::Http,

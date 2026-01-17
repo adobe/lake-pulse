@@ -228,7 +228,7 @@ impl AnalyzerBuilder {
 /// # }
 /// ```
 ///
-/// For complete examples, see the [`examples/`](https://github.com/aionescu_adobe/lake-pulse/tree/main/examples) directory.
+/// For complete examples, see the [`examples/`](https://github.com/adobe/lake-pulse/tree/main/examples) directory.
 pub struct Analyzer {
     storage_provider: Arc<dyn StorageProvider>,
     parallelism: usize,
