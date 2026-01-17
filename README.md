@@ -1,6 +1,7 @@
 # Lake Pulse <img src=./rustacean-flat-happy.svg style="width: 40px" />
 
 [![CI][ci-badge]][ci-link]
+[![Audit][audit-badge]][audit-link]
 [![codecov][coverage-badge]][coverage-link]
 [![Docs][docs-badge]][docs-link]
 [![License: MIT or Apache-2.0][license-badge]][license-link]
@@ -18,6 +19,8 @@
 [license-link]: ./LICENSE-APACHE
 [docs-badge]: https://docs.rs/lake-pulse/badge.svg
 [docs-link]: https://docs.rs/lake-pulse
+[audit-badge]: https://github.com/adobe/lake-pulse/actions/workflows/audit.yml/badge.svg
+[audit-link]: https://github.com/adobe/lake-pulse/actions/workflows/audit.yml
 
 ![Lake Pulse Logo](lake-pulse-logo-new.svg)
 
