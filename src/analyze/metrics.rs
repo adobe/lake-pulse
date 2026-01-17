@@ -25,6 +25,38 @@ use std::collections::{HashMap, LinkedList};
 use std::error::Error;
 use std::fmt::{Display, Formatter, Result as FmtResult};
 
+/// Format a size in bytes to a human-readable string with appropriate units.
+/// Automatically selects the most appropriate unit (B, KB, MB, GB, TB) based on the size.
+///
+/// # Examples
+/// ```
+/// use lake_pulse::analyze::metrics::format_size_smart;
+///
+/// assert_eq!(format_size_smart(500), "500 B");
+/// assert_eq!(format_size_smart(1536), "1.50 KB");
+/// assert_eq!(format_size_smart(1_572_864), "1.50 MB");
+/// assert_eq!(format_size_smart(1_610_612_736), "1.50 GB");
+/// assert_eq!(format_size_smart(1_649_267_441_664), "1.50 TB");
+/// ```
+pub fn format_size_smart(bytes: u64) -> String {
+    const KB: u64 = 1024;
+    const MB: u64 = 1024 * KB;
+    const GB: u64 = 1024 * MB;
+    const TB: u64 = 1024 * GB;
+
+    if bytes >= TB {
+        format!("{:.2} TB", bytes as f64 / TB as f64)
+    } else if bytes >= GB {
+        format!("{:.2} GB", bytes as f64 / GB as f64)
+    } else if bytes >= MB {
+        format!("{:.2} MB", bytes as f64 / MB as f64)
+    } else if bytes >= KB {
+        format!("{:.2} KB", bytes as f64 / KB as f64)
+    } else {
+        format!("{} B", bytes)
+    }
+}
+
 /// Information about a single file in the data lake table.
 ///
 /// Contains metadata about a file including its path, size, modification time,
@@ -431,15 +463,8 @@ impl Display for HealthReport {
             (dist.small_files + dist.medium_files + dist.large_files + dist.very_large_files)
                 as f64;
 
-        let size_gb = report.metrics.total_size_bytes as f64 / (1024.0 * 1024.0 * 1024.0);
-        let size_str = if size_gb >= 1.0 {
-            format!("{:.2} GB", size_gb)
-        } else {
-            let size_mb = report.metrics.total_size_bytes as f64 / (1024.0 * 1024.0);
-            format!("{:.2} MB", size_mb)
-        };
-
-        let avg_mb = report.metrics.avg_file_size_bytes / (1024.0 * 1024.0);
+        let size_str = format_size_smart(report.metrics.total_size_bytes);
+        let avg_size_str = format_size_smart(report.metrics.avg_file_size_bytes as u64);
 
         writeln!(
             f,
@@ -471,7 +496,7 @@ impl Display for HealthReport {
             f,
             " {:<19} {:>8}              {:<19} {:>8}  {:>5.1}%",
             "Avg File Size",
-            format!("{:.2} MB", avg_mb),
+            avg_size_str,
             "Large (128MB-1GB)",
             dist.large_files,
             if total_files > 0.0 {
@@ -502,12 +527,6 @@ impl Display for HealthReport {
         let skew = &report.metrics.data_skew;
         let meta = &report.metrics.metadata_health;
 
-        let largest_mb = skew.largest_partition_size as f64 / (1024.0 * 1024.0);
-        let smallest_mb = skew.smallest_partition_size as f64 / (1024.0 * 1024.0);
-        let avg_partition_mb = skew.avg_partition_size as f64 / (1024.0 * 1024.0);
-        let meta_size_mb = meta.metadata_total_size_bytes as f64 / (1024.0 * 1024.0);
-        let avg_meta_mb = meta.avg_metadata_file_size / (1024.0 * 1024.0);
-
         writeln!(
             f,
             " {:<19} {:>8}              {:<19} {:>8}",
@@ -522,20 +541,20 @@ impl Display for HealthReport {
             "File Size Skew",
             format!("{:.2}", skew.file_size_skew_score),
             "Size",
-            format!("{:.2} MB", meta_size_mb)
+            format_size_smart(meta.metadata_total_size_bytes)
         )?;
         writeln!(
             f,
             " {:<19} {:>8}              {:<19} {:>8}",
             "Largest Partition",
             if skew.avg_partition_size > 0 {
-                format!("{:.2} MB", largest_mb)
+                format_size_smart(skew.largest_partition_size)
             } else {
                 "N/A".to_string()
             },
             "Avg Size",
             if meta.metadata_file_count > 0 {
-                format!("{:.2} MB", avg_meta_mb)
+                format_size_smart(meta.avg_metadata_file_size as u64)
             } else {
                 "N/A".to_string()
             }
@@ -545,7 +564,7 @@ impl Display for HealthReport {
             " {:<19} {:>8}              {:<19} {:>8}",
             "Smallest Partition",
             if skew.avg_partition_size > 0 {
-                format!("{:.2} MB", smallest_mb)
+                format_size_smart(skew.smallest_partition_size)
             } else {
                 "N/A".to_string()
             },
@@ -572,7 +591,7 @@ impl Display for HealthReport {
             " {:<19} {:>8}              {:<12} {:>15}",
             "Avg Partition Size",
             if skew.avg_partition_size > 0 {
-                format!("{:.2} MB", avg_partition_mb)
+                format_size_smart(skew.avg_partition_size)
             } else {
                 "N/A".to_string()
             },
@@ -592,13 +611,7 @@ impl Display for HealthReport {
 
         let snap = &report.metrics.snapshot_health;
         let has_unreferenced = !report.metrics.unreferenced_files.is_empty();
-        let wasted_gb = report.metrics.unreferenced_size_bytes as f64 / (1024.0 * 1024.0 * 1024.0);
-        let wasted_str = if wasted_gb >= 1.0 {
-            format!("{:.2} GB", wasted_gb)
-        } else {
-            let wasted_mb = report.metrics.unreferenced_size_bytes as f64 / (1024.0 * 1024.0);
-            format!("{:.2} MB", wasted_mb)
-        };
+        let wasted_str = format_size_smart(report.metrics.unreferenced_size_bytes);
 
         writeln!(
             f,
@@ -618,11 +631,7 @@ impl Display for HealthReport {
             "Retention Risk",
             format!("{:.1}%", snap.snapshot_retention_risk * 100.0),
             "Wasted Space",
-            if has_unreferenced {
-                wasted_str
-            } else {
-                "0 MB".to_string()
-            }
+            wasted_str
         )?;
         writeln!(
             f,
@@ -697,10 +706,7 @@ impl Display for HealthReport {
                             0 => format!(
                                 " {:<19} {:>8}",
                                 "Avg Cluster Size",
-                                format!(
-                                    "{:.2} MB",
-                                    clustering.avg_cluster_size_bytes / (1024.0 * 1024.0)
-                                )
+                                format_size_smart(clustering.avg_cluster_size_bytes as u64)
                             ),
                             1 => format!(
                                 " {:<19} {:>8}",
@@ -735,15 +741,8 @@ impl Display for HealthReport {
                 };
 
                 let right = if let Some(ref dv_metrics) = report.metrics.deletion_vector_metrics {
-                    let dv_size_mb =
-                        dv_metrics.total_deletion_vector_size_bytes as f64 / (1024.0 * 1024.0);
-                    let dv_size_str = if dv_size_mb >= 1.0 {
-                        format!("{:.2} MB", dv_size_mb)
-                    } else {
-                        let dv_size_kb =
-                            dv_metrics.total_deletion_vector_size_bytes as f64 / 1024.0;
-                        format!("{:.2} KB", dv_size_kb)
-                    };
+                    let dv_size_str =
+                        format_size_smart(dv_metrics.total_deletion_vector_size_bytes);
 
                     match i {
                         0 => format!(
@@ -846,15 +845,7 @@ impl Display for HealthReport {
                 };
 
                 let right = if let Some(ref tt_metrics) = report.metrics.time_travel_metrics {
-                    let historical_gb =
-                        tt_metrics.total_historical_size_bytes as f64 / (1024.0 * 1024.0 * 1024.0);
-                    let historical_str = if historical_gb >= 1.0 {
-                        format!("{:.2} GB", historical_gb)
-                    } else {
-                        let historical_mb =
-                            tt_metrics.total_historical_size_bytes as f64 / (1024.0 * 1024.0);
-                        format!("{:.2} MB", historical_mb)
-                    };
+                    let historical_str = format_size_smart(tt_metrics.total_historical_size_bytes);
 
                     match i {
                         0 => format!(
@@ -978,19 +969,12 @@ impl Display for HealthReport {
                 };
 
                 let right = if let Some(ref compaction_metrics) = report.metrics.file_compaction {
-                    let small_files_mb =
-                        compaction_metrics.small_files_size_bytes as f64 / (1024.0 * 1024.0);
-                    let savings_mb = compaction_metrics.estimated_compaction_savings_bytes as f64
-                        / (1024.0 * 1024.0);
-                    let savings_str = if savings_mb >= 1.0 {
-                        format!("{:.2} MB", savings_mb)
-                    } else {
-                        let savings_kb =
-                            compaction_metrics.estimated_compaction_savings_bytes as f64 / 1024.0;
-                        format!("{:.2} KB", savings_kb)
-                    };
-                    let target_mb = compaction_metrics.recommended_target_file_size_bytes as f64
-                        / (1024.0 * 1024.0);
+                    let small_files_str =
+                        format_size_smart(compaction_metrics.small_files_size_bytes);
+                    let savings_str =
+                        format_size_smart(compaction_metrics.estimated_compaction_savings_bytes);
+                    let target_str =
+                        format_size_smart(compaction_metrics.recommended_target_file_size_bytes);
 
                     match i {
                         0 => format!(
@@ -1003,22 +987,14 @@ impl Display for HealthReport {
                             "Small Files",
                             format!("{}", compaction_metrics.small_files_count)
                         ),
-                        2 => format!(
-                            " {:<19} {:>8}",
-                            "Small Size",
-                            format!("{:.2} MB", small_files_mb)
-                        ),
+                        2 => format!(" {:<19} {:>8}", "Small Size", small_files_str),
                         3 => format!(
                             " {:<19} {:>8}",
                             "Potential Files",
                             format!("{}", compaction_metrics.potential_compaction_files)
                         ),
                         4 => format!(" {:<19} {:>8}", "Savings", savings_str),
-                        5 => format!(
-                            " {:<19} {:>8}",
-                            "Target Size",
-                            format!("{:.0} MB", target_mb)
-                        ),
+                        5 => format!(" {:<19} {:>8}", "Target Size", target_str),
                         6 => format!(
                             " {:<19} {:>8}",
                             "Priority",
@@ -1367,9 +1343,9 @@ impl HealthMetrics {
         // Check for unreferenced files
         if !self.unreferenced_files.is_empty() {
             self.recommendations.push(format!(
-                "Found {} unreferenced files ({} bytes). Consider cleaning up orphaned data files.",
+                "Found {} unreferenced files ({}). Consider cleaning up orphaned data files.",
                 self.unreferenced_files.len(),
-                self.unreferenced_size_bytes
+                format_size_smart(self.unreferenced_size_bytes)
             ));
         }
 
@@ -1582,11 +1558,10 @@ impl HealthMetrics {
 
             if compaction_metrics.estimated_compaction_savings_bytes > 100 * 1024 * 1024 {
                 // > 100MB
-                let savings_mb = compaction_metrics.estimated_compaction_savings_bytes as f64
-                    / (1024.0 * 1024.0);
-                self.recommendations.push(
-                    format!("Significant compaction savings available: {:.1} MB. Consider running OPTIMIZE.", savings_mb).to_string()
-                );
+                self.recommendations.push(format!(
+                    "Significant compaction savings available: {}. Consider running OPTIMIZE.",
+                    format_size_smart(compaction_metrics.estimated_compaction_savings_bytes)
+                ));
             }
         }
 
@@ -1633,6 +1608,87 @@ impl HealthMetrics {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // ==================== format_size_smart tests ====================
+
+    #[test]
+    fn test_format_size_smart_bytes() {
+        assert_eq!(format_size_smart(0), "0 B");
+        assert_eq!(format_size_smart(1), "1 B");
+        assert_eq!(format_size_smart(500), "500 B");
+        assert_eq!(format_size_smart(1023), "1023 B");
+    }
+
+    #[test]
+    fn test_format_size_smart_kilobytes() {
+        assert_eq!(format_size_smart(1024), "1.00 KB");
+        assert_eq!(format_size_smart(1536), "1.50 KB");
+        assert_eq!(format_size_smart(2048), "2.00 KB");
+        assert_eq!(format_size_smart(10 * 1024), "10.00 KB");
+        assert_eq!(format_size_smart(1024 * 1024 - 1), "1024.00 KB");
+    }
+
+    #[test]
+    fn test_format_size_smart_megabytes() {
+        assert_eq!(format_size_smart(1024 * 1024), "1.00 MB");
+        assert_eq!(format_size_smart(1_572_864), "1.50 MB"); // 1.5 MB
+        assert_eq!(format_size_smart(100 * 1024 * 1024), "100.00 MB");
+        assert_eq!(format_size_smart(1024 * 1024 * 1024 - 1), "1024.00 MB");
+    }
+
+    #[test]
+    fn test_format_size_smart_gigabytes() {
+        assert_eq!(format_size_smart(1024 * 1024 * 1024), "1.00 GB");
+        assert_eq!(format_size_smart(1_610_612_736), "1.50 GB"); // 1.5 GB
+        assert_eq!(format_size_smart(50 * 1024 * 1024 * 1024), "50.00 GB");
+        assert_eq!(
+            format_size_smart(1024 * 1024 * 1024 * 1024 - 1),
+            "1024.00 GB"
+        );
+    }
+
+    #[test]
+    fn test_format_size_smart_terabytes() {
+        assert_eq!(format_size_smart(1024 * 1024 * 1024 * 1024), "1.00 TB");
+        assert_eq!(format_size_smart(1_649_267_441_664), "1.50 TB"); // 1.5 TB
+        assert_eq!(
+            format_size_smart(10 * 1024 * 1024 * 1024 * 1024),
+            "10.00 TB"
+        );
+    }
+
+    #[test]
+    fn test_format_size_smart_boundary_values() {
+        // Test exact boundaries between units
+        assert_eq!(format_size_smart(1023), "1023 B");
+        assert_eq!(format_size_smart(1024), "1.00 KB");
+
+        assert_eq!(format_size_smart(1024 * 1024 - 1), "1024.00 KB");
+        assert_eq!(format_size_smart(1024 * 1024), "1.00 MB");
+
+        assert_eq!(format_size_smart(1024 * 1024 * 1024 - 1), "1024.00 MB");
+        assert_eq!(format_size_smart(1024 * 1024 * 1024), "1.00 GB");
+
+        assert_eq!(
+            format_size_smart(1024 * 1024 * 1024 * 1024 - 1),
+            "1024.00 GB"
+        );
+        assert_eq!(format_size_smart(1024 * 1024 * 1024 * 1024), "1.00 TB");
+    }
+
+    #[test]
+    fn test_format_size_smart_realistic_file_sizes() {
+        // Small parquet file
+        assert_eq!(format_size_smart(4240), "4.14 KB");
+        // Medium parquet file
+        assert_eq!(format_size_smart(16 * 1024 * 1024), "16.00 MB");
+        // Large parquet file
+        assert_eq!(format_size_smart(128 * 1024 * 1024), "128.00 MB");
+        // Very large file
+        assert_eq!(format_size_smart(2 * 1024 * 1024 * 1024), "2.00 GB");
+    }
+
+    // ==================== Chrome tracing tests ====================
 
     #[test]
     fn test_chrome_tracing_with_real_data_reproduces_overflow() {
@@ -2309,7 +2365,7 @@ mod tests {
 
         assert!(!metrics.recommendations.is_empty());
         assert!(metrics.recommendations[0].contains("unreferenced files"));
-        assert!(metrics.recommendations[0].contains("3072"));
+        assert!(metrics.recommendations[0].contains("3.00 KB")); // 3072 bytes = 3.00 KB
     }
 
     #[test]
