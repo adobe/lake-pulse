@@ -24,6 +24,15 @@ use std::error::Error;
 use std::sync::Arc;
 use tracing::{info, warn};
 
+/// Convert Iceberg FormatVersion to i32
+fn format_version_to_i32(version: iceberg::spec::FormatVersion) -> i32 {
+    match version {
+        iceberg::spec::FormatVersion::V1 => 1,
+        iceberg::spec::FormatVersion::V2 => 2,
+        iceberg::spec::FormatVersion::V3 => 3,
+    }
+}
+
 /// Iceberg table reader for extracting metrics
 pub struct IcebergReader {
     table: StaticTable,
@@ -220,10 +229,7 @@ impl IcebergReader {
         let manifest_stats = self.extract_manifest_statistics(current_snapshot).await?;
 
         // Convert format version to i32
-        let format_version = match table_metadata.format_version() {
-            iceberg::spec::FormatVersion::V1 => 1,
-            iceberg::spec::FormatVersion::V2 => 2,
-        };
+        let format_version = format_version_to_i32(table_metadata.format_version());
 
         let metrics = IcebergMetrics {
             current_snapshot_id: current_snapshot.map(|s| s.snapshot_id()),
@@ -786,8 +792,10 @@ mod tests {
 
         // Verify basic metrics structure
         assert!(
-            metrics.format_version == 1 || metrics.format_version == 2,
-            "Format version should be 1 or 2"
+            metrics.format_version == 1
+                || metrics.format_version == 2
+                || metrics.format_version == 3,
+            "Format version should be 1, 2, or 3"
         );
         assert!(
             !metrics.table_uuid.is_empty(),
@@ -1012,12 +1020,22 @@ mod tests {
             .await
             .expect("Failed to extract metrics");
 
-        // Iceberg format version should be 1 or 2
+        // Iceberg format version should be 1, 2, or 3
         assert!(
-            metrics.format_version == 1 || metrics.format_version == 2,
-            "Format version should be 1 or 2, got {}",
+            metrics.format_version == 1
+                || metrics.format_version == 2
+                || metrics.format_version == 3,
+            "Format version should be 1, 2, or 3, got {}",
             metrics.format_version
         );
+    }
+
+    #[test]
+    fn test_format_version_conversion() {
+        // Test that all FormatVersion variants are correctly converted to i32
+        assert_eq!(format_version_to_i32(iceberg::spec::FormatVersion::V1), 1);
+        assert_eq!(format_version_to_i32(iceberg::spec::FormatVersion::V2), 2);
+        assert_eq!(format_version_to_i32(iceberg::spec::FormatVersion::V3), 3);
     }
 
     #[tokio::test]
