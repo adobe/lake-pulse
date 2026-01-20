@@ -8,7 +8,7 @@
 [![Latest Version][crates-badge]][crates-link]
 [![Downloads][downloads-badge]][crates-link]
 
-[ci-badge]: https://github.com/adobe/lake-pulse/actions/workflows/ci.yml/badge.svg
+[ci-badge]: https://img.shields.io/github/actions/workflow/status/adobe/lake-pulse/ci.yml?label=ci
 [ci-link]: https://github.com/adobe/lake-pulse/actions/workflows/ci.yml
 [crates-badge]: https://img.shields.io/crates/v/lake-pulse.svg
 [crates-link]: https://crates.io/crates/lake-pulse
@@ -19,7 +19,7 @@
 [license-link]: ./LICENSE-APACHE
 [docs-badge]: https://docs.rs/lake-pulse/badge.svg
 [docs-link]: https://docs.rs/lake-pulse
-[audit-badge]: https://github.com/adobe/lake-pulse/actions/workflows/audit.yml/badge.svg
+[audit-badge]: https://img.shields.io/github/actions/workflow/status/adobe/lake-pulse/audit.yml?label=audit
 [audit-link]: https://github.com/adobe/lake-pulse/actions/workflows/audit.yml
 
 ![Lake Pulse Logo](lake-pulse-logo-new.svg)
