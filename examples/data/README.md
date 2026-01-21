@@ -331,6 +331,57 @@ spark-shell \
 --conf spark.sql.catalog.lance.root=file://$DATA_DIR
 ```
 
+## Apache Paimon
+
+First, set your absolute path where you want to create the dataset:
+
+```scala
+val absolutePath =
+    new java.io.File("data/paimon_dataset").getAbsolutePath
+```
+
+```scala
+import org.apache.paimon.spark._
+
+// Create initial dataset
+val s = (1 to 20 map { case(i) =>
+    (i, s"a-$i", s"${i*2}")
+}).toDF
+    .withColumnRenamed("_1", "id")
+    .withColumnRenamed("_2", "f1")
+    .withColumnRenamed("_3", "f2")
+
+// Write as Paimon table
+s.write.format("paimon")
+    .option("primary-key", "id")
+    .mode("overwrite")
+    .save(s"file://$absolutePath")
+
+// Append more data
+val s2 = (100 to 200 map { case(i) =>
+    (i, s"a-$i", s"${i*2}")
+}).toDF
+    .withColumnRenamed("_1", "id")
+    .withColumnRenamed("_2", "f1")
+    .withColumnRenamed("_3", "f2")
+
+s2.write.format("paimon")
+    .option("primary-key", "id")
+    .mode("append")
+    .save(s"file://$absolutePath")
+```
+
+Spark Shell Command:
+
+```bash
+spark-shell \
+--driver-memory 8g \
+--packages "org.apache.paimon:paimon-spark-3.4:1.0.0" \
+--conf spark.sql.extensions=org.apache.paimon.spark.extensions.PaimonSparkSessionExtensions \
+--conf spark.sql.catalog.paimon=org.apache.paimon.spark.SparkCatalog \
+--conf spark.sql.catalog.paimon.warehouse=file:///tmp/paimon
+```
+
 ## Delta Lake with Features
 
 This will create a Delta Table that has the following features enabled:

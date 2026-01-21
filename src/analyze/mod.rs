@@ -15,7 +15,7 @@
 //!
 //! This module provides the core analysis capabilities for data lake tables.
 //! It includes the main [`Analyzer`] struct and format-specific analyzers for
-//! Delta Lake, Apache Iceberg, Apache Hudi, and Lance.
+//! Delta Lake, Apache Iceberg, Apache Hudi, Lance, and Apache Paimon.
 //!
 //! ## Main Components
 //!

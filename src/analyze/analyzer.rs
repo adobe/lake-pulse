@@ -170,7 +170,7 @@ impl AnalyzerBuilder {
 /// Main analyzer for data lake table health analysis.
 ///
 /// The `Analyzer` provides comprehensive health analysis for data lake tables
-/// across multiple formats (Delta Lake, Apache Iceberg, Apache Hudi, Lance) and
+/// across multiple formats (Delta Lake, Apache Iceberg, Apache Hudi, Lance, Apache Paimon) and
 /// storage providers (AWS S3, Azure Data Lake, GCS, Local filesystem).
 ///
 /// # Features
@@ -278,7 +278,7 @@ impl Analyzer {
     /// - Metadata processing
     /// - Referenced file discovery
     /// - Unreferenced file detection
-    /// - Table-specific metrics extraction (Delta, Iceberg, Hudi, Lance)
+    /// - Table-specific metrics extraction (Delta, Iceberg, Hudi, Lance, Paimon)
     /// - Health metrics calculation
     ///
     /// # Arguments
