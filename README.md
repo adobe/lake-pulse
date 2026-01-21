@@ -24,7 +24,7 @@
 
 ![Lake Pulse Logo](lake-pulse-logo-new.svg)
 
-A Rust library for analyzing data lake table health — *checking the pulse* — across multiple formats (Delta Lake, Apache Iceberg, Apache Hudi, Lance) and storage providers (AWS S3, Azure Data Lake, GCS, HDFS, Local).
+A Rust library for analyzing data lake table health — *checking the pulse* — across multiple formats (Delta Lake, Apache Iceberg, Apache Hudi, Lance, Apache Paimon) and storage providers (AWS S3, Azure Data Lake, GCS, HDFS, Local).
 
 ## Supported Formats
 
@@ -104,7 +104,7 @@ By default, Lake Pulse includes support for **Delta Lake** and **Apache Iceberg*
 | `hudi`   | Enables Apache Hudi support                  |
 | `lance`  | Enables Lance support                        |
 | `paimon` | Enables Apache Paimon support                |
-| `all`    | Enables all table formats (`hudi` + `lance`) |
+| `all`    | Enables all table formats (`hudi` + `lance` + `paimon`) |
 
 ### Usage
 
@@ -123,7 +123,7 @@ lake-pulse = { version = "0.2", features = ["lance"] }
 # With Paimon support
 lake-pulse = { version = "0.2", features = ["paimon"] }
 
-# With all table formats (Delta + Iceberg + Hudi + Lance)
+# With all table formats (Delta + Iceberg + Hudi + Lance + Paimon)
 lake-pulse = { version = "0.2", features = ["all"] }
 ```
 
@@ -186,6 +186,7 @@ See the [`examples/`](examples/) directory for more detailed usage examples:
 - `local_store_iceberg.rs` - Iceberg table example
 - `local_store_hudi.rs` - Hudi table example *(requires `hudi` feature)*
 - `local_store_lance.rs` - Lance table example *(requires `lance` feature)*
+- `local_store_paimon.rs` - Paimon table example *(requires `paimon` feature)*
 
 Run examples with:
 ```bash
@@ -194,6 +195,7 @@ cargo run --example s3_store
 # For examples requiring feature flags:
 cargo run --features hudi --example local_store_hudi
 cargo run --features lance --example local_store_lance
+cargo run --features paimon --example local_store_paimon
 ```
 
 ## Documentation
