@@ -21,8 +21,9 @@
 //!
 //! - [`delta`] - Delta Lake format reader
 //! - [`iceberg`] - Apache Iceberg format reader
-//! - [`hudi`] - Apache Hudi format reader
-//! - [`lance`] - Lance format reader
+//! - [`hudi`] - Apache Hudi format reader (requires `hudi` feature)
+//! - [`lance`] - Lance format reader (requires `lance` feature)
+//! - [`paimon`] - Apache Paimon format reader (requires `paimon` feature)
 
 pub mod delta;
 #[cfg(feature = "hudi")]
@@ -30,3 +31,5 @@ pub mod hudi;
 pub mod iceberg;
 #[cfg(feature = "lance")]
 pub mod lance;
+#[cfg(feature = "paimon")]
+pub mod paimon;

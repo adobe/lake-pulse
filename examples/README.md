@@ -31,12 +31,14 @@ Some examples require specific feature flags to be enabled:
 |---------|------------------|
 | `local_store_hudi` | `hudi` |
 | `local_store_lance` | `lance` |
+| `local_store_paimon` | `paimon` |
 
 To run these examples, use the `--features` flag:
 
 ```bash
 cargo run --features hudi --example local_store_hudi
 cargo run --features lance --example local_store_lance
+cargo run --features paimon --example local_store_paimon
 
 # Or use the all feature to enable all table formats:
 cargo run --features all --example local_store_hudi

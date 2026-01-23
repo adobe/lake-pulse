@@ -24,6 +24,8 @@ use crate::analyze::lance::analyze::LanceAnalyzer;
 use crate::analyze::metrics::{
     FileCompactionMetrics, FileInfo, HealthMetrics, HealthReport, PartitionInfo, TimedLikeMetrics,
 };
+#[cfg(feature = "paimon")]
+use crate::analyze::paimon::PaimonAnalyzer;
 use crate::analyze::table_analyzer::TableAnalyzer;
 use crate::reader::delta::reader::DeltaReader;
 #[cfg(feature = "hudi")]
@@ -31,6 +33,8 @@ use crate::reader::hudi::reader::HudiReader;
 use crate::reader::iceberg::reader::IcebergReader;
 #[cfg(feature = "lance")]
 use crate::reader::lance::reader::LanceReader;
+#[cfg(feature = "paimon")]
+use crate::reader::paimon::reader::PaimonReader;
 use crate::storage::{FileMetadata, StorageConfig, StorageProvider, StorageProviderFactory};
 use crate::util::helpers::{
     detect_table_type, measure_dur, measure_dur_async, measure_dur_with_error,
@@ -166,7 +170,7 @@ impl AnalyzerBuilder {
 /// Main analyzer for data lake table health analysis.
 ///
 /// The `Analyzer` provides comprehensive health analysis for data lake tables
-/// across multiple formats (Delta Lake, Apache Iceberg, Apache Hudi, Lance) and
+/// across multiple formats (Delta Lake, Apache Iceberg, Apache Hudi, Lance, Apache Paimon) and
 /// storage providers (AWS S3, Azure Data Lake, GCS, Local filesystem).
 ///
 /// # Features
@@ -274,7 +278,7 @@ impl Analyzer {
     /// - Metadata processing
     /// - Referenced file discovery
     /// - Unreferenced file detection
-    /// - Table-specific metrics extraction (Delta, Iceberg, Hudi, Lance)
+    /// - Table-specific metrics extraction (Delta, Iceberg, Hudi, Lance, Paimon)
     /// - Health metrics calculation
     ///
     /// # Arguments
@@ -367,6 +371,11 @@ impl Analyzer {
             )),
             #[cfg(feature = "lance")]
             "lance" => Arc::new(LanceAnalyzer::new(
+                Arc::clone(&self.storage_provider),
+                self.parallelism,
+            )),
+            #[cfg(feature = "paimon")]
+            "paimon" => Arc::new(PaimonAnalyzer::new(
                 Arc::clone(&self.storage_provider),
                 self.parallelism,
             )),
@@ -677,6 +686,35 @@ impl Analyzer {
                     }
                 },
                 Some(|_| "Opened Lance reader".to_string()),
+            )
+            .await?;
+        }
+
+        #[cfg(feature = "paimon")]
+        if table_type == "paimon" {
+            measure_dur_async(
+                "paimon_reader",
+                &mut internal_metrics,
+                || async {
+                    let paimon_reader = PaimonReader::open(
+                        self.storage_provider.uri_from_path(location).as_str(),
+                        &self.storage_provider.clean_options(),
+                    )
+                    .await;
+
+                    match paimon_reader {
+                        Ok(reader) => {
+                            metrics.paimon_table_specific_metrics =
+                                Some(reader.extract_metrics().await?);
+                            Ok(())
+                        }
+                        Err(e) => {
+                            warn!("Failed to open Paimon reader: {}", e);
+                            Err(e)
+                        }
+                    }
+                },
+                Some(|_| "Opened Paimon reader".to_string()),
             )
             .await?;
         }

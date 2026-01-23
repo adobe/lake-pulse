@@ -61,6 +61,15 @@ pub fn detect_table_type(objects: &[FileMetadata]) -> String {
         return "hudi".to_string();
     }
 
+    // Check for Paimon: look for snapshot/ directory with snapshot-* files
+    // Paimon tables have a snapshot directory containing snapshot-N files
+    if objects
+        .iter()
+        .any(|f| f.path.contains("/snapshot/") && f.path.contains("snapshot-"))
+    {
+        return "paimon".to_string();
+    }
+
     "unknown".to_string()
 }
 
@@ -301,6 +310,34 @@ not json
         ];
 
         assert_eq!(detect_table_type(&objects), "unknown");
+    }
+
+    #[test]
+    fn test_detect_table_type_paimon() {
+        let objects = vec![
+            FileMetadata {
+                path: "table/snapshot/snapshot-1".to_string(),
+                size: 1024,
+                last_modified: None,
+            },
+            FileMetadata {
+                path: "table/schema/schema-0".to_string(),
+                size: 512,
+                last_modified: None,
+            },
+            FileMetadata {
+                path: "table/manifest/manifest-list-1.avro".to_string(),
+                size: 2048,
+                last_modified: None,
+            },
+            FileMetadata {
+                path: "table/bucket-0/data-1.orc".to_string(),
+                size: 4096,
+                last_modified: None,
+            },
+        ];
+
+        assert_eq!(detect_table_type(&objects), "paimon");
     }
 
     #[test]
