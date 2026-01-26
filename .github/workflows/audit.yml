@@ -49,7 +49,7 @@ jobs:
           echo "warn_count=$warn_count" >> $GITHUB_OUTPUT
 
       - name: Report audit results
-        uses: actions/github-script@v7
+        uses: actions/github-script@v8
         with:
           script: |
             const hasVulnerabilities = '${{ steps.audit.outputs.has_vulnerabilities }}' === 'true';
