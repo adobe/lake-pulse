@@ -112,19 +112,19 @@ By default, Lake Pulse includes support for **Delta Lake** and **Apache Iceberg*
 # In your Cargo.toml
 
 # Default (Delta + Iceberg only)
-lake-pulse = "0.2"
+lake-pulse = "0.3"
 
 # With Hudi support
-lake-pulse = { version = "0.2", features = ["hudi"] }
+lake-pulse = { version = "0.3", features = ["hudi"] }
 
 # With Lance support
-lake-pulse = { version = "0.2", features = ["lance"] }
+lake-pulse = { version = "0.3", features = ["lance"] }
 
 # With Paimon support
-lake-pulse = { version = "0.2", features = ["paimon"] }
+lake-pulse = { version = "0.3", features = ["paimon"] }
 
 # With all table formats (Delta + Iceberg + Hudi + Lance + Paimon)
-lake-pulse = { version = "0.2", features = ["all"] }
+lake-pulse = { version = "0.3", features = ["all"] }
 ```
 
 ## Storage Configuration
