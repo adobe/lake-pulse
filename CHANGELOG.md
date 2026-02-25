@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.1](https://github.com/adobe/lake-pulse/compare/v0.3.0...v0.3.1) - 2026-02-25
+
+### Dependencies
+
+- *(deps)* update deltalake-aws requirement from 0.13 to 0.14
+- *(deps)* update deltalake-azure requirement from 0.13 to 0.14
+- *(deps)* update deltalake requirement from 0.30 to 0.31
+- *(deps)* update lance and lance-index requirements from 1.0 to 2.0
+
+### Documentation
+
+- Update docs to version `0.3`
+
 ## [0.3.0](https://github.com/adobe/lake-pulse/compare/v0.2.2...v0.3.0) - 2026-01-23
 
 ### Added
