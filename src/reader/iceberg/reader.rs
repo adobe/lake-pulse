@@ -19,6 +19,7 @@ use iceberg::io::FileIOBuilder;
 use iceberg::spec::{Snapshot, TableMetadata as IcebergTableMetadata};
 use iceberg::table::StaticTable;
 use iceberg::TableIdent;
+use iceberg_storage_opendal::OpenDalStorageFactory;
 use std::collections::HashMap;
 use std::error::Error;
 use std::sync::Arc;
@@ -86,14 +87,14 @@ impl IcebergReader {
         let normalized_location = Self::normalize_file_path(table_location);
 
         // Build FileIO with storage options
-        let mut file_io_builder = FileIOBuilder::new_fs_io();
+        let mut file_io_builder = FileIOBuilder::new(Arc::new(OpenDalStorageFactory::Fs));
 
         // Add storage options to FileIO
         for (key, value) in storage_options {
             file_io_builder = file_io_builder.with_prop(key, value);
         }
 
-        let file_io = file_io_builder.build()?;
+        let file_io = file_io_builder.build();
 
         // Find the latest metadata file
         // Iceberg tables store metadata in <table_location>/metadata/v<N>.metadata.json
@@ -657,6 +658,7 @@ impl IcebergReader {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use iceberg_storage_opendal::OpenDalStorageFactory;
 
     // Helper function to get the test iceberg table directory path
     fn get_test_iceberg_table_path() -> String {
@@ -698,7 +700,7 @@ mod tests {
         // The example iceberg_dataset has a version-hint.text file
         let table_location = get_test_iceberg_table_path();
 
-        let file_io = FileIOBuilder::new_fs_io().build().unwrap();
+        let file_io = FileIOBuilder::new(Arc::new(OpenDalStorageFactory::Fs)).build();
         let result = IcebergReader::find_latest_metadata(&file_io, &table_location).await;
 
         assert!(
@@ -722,7 +724,7 @@ mod tests {
     async fn test_find_latest_metadata_invalid_path() {
         let table_location = "file:///nonexistent/path/to/table";
 
-        let file_io = FileIOBuilder::new_fs_io().build().unwrap();
+        let file_io = FileIOBuilder::new(Arc::new(OpenDalStorageFactory::Fs)).build();
         let result = IcebergReader::find_latest_metadata(&file_io, table_location).await;
 
         assert!(
