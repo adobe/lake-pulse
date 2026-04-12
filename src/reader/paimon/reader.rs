@@ -144,7 +144,7 @@ impl PaimonReader {
         let store = Arc::new(store);
 
         // Read the LATEST file to get current snapshot ID
-        let latest_path = base_path.child("snapshot").child("LATEST");
+        let latest_path = base_path.clone().join("snapshot").join("LATEST");
         let current_snapshot_id = match store.get(&latest_path).await {
             Ok(result) => {
                 let bytes = result.bytes().await?;
@@ -159,8 +159,9 @@ impl PaimonReader {
 
         // Read current snapshot
         let snapshot_path = base_path
-            .child("snapshot")
-            .child(format!("snapshot-{}", current_snapshot_id));
+            .clone()
+            .join("snapshot")
+            .join(format!("snapshot-{}", current_snapshot_id));
         let current_snapshot = match store.get(&snapshot_path).await {
             Ok(result) => {
                 let bytes = result.bytes().await?;
@@ -181,8 +182,9 @@ impl PaimonReader {
         // Read current schema
         let schema_id = current_snapshot.as_ref().map(|s| s.schema_id).unwrap_or(0);
         let schema_path = base_path
-            .child("schema")
-            .child(format!("schema-{}", schema_id));
+            .clone()
+            .join("schema")
+            .join(format!("schema-{}", schema_id));
         let current_schema = match store.get(&schema_path).await {
             Ok(result) => {
                 let bytes = result.bytes().await?;
@@ -242,7 +244,7 @@ impl PaimonReader {
     async fn extract_snapshot_metrics(
         &self,
     ) -> Result<SnapshotMetrics, Box<dyn Error + Send + Sync>> {
-        let snapshot_dir = self.base_path.child("snapshot");
+        let snapshot_dir = self.base_path.clone().join("snapshot");
         let mut total_snapshots = 0usize;
         let mut earliest_snapshot_id: Option<i64> = None;
 
@@ -286,7 +288,7 @@ impl PaimonReader {
     }
 
     async fn extract_schema_metrics(&self) -> Result<SchemaMetrics, Box<dyn Error + Send + Sync>> {
-        let schema_dir = self.base_path.child("schema");
+        let schema_dir = self.base_path.clone().join("schema");
         let mut total_schema_versions = 0usize;
 
         let mut stream = self.store.list(Some(&schema_dir));
@@ -322,7 +324,7 @@ impl PaimonReader {
         let mut total_manifest_size_bytes = 0u64;
 
         // Count manifest files by listing
-        let manifest_dir = self.base_path.child("manifest");
+        let manifest_dir = self.base_path.clone().join("manifest");
         let mut stream = self.store.list(Some(&manifest_dir));
         while let Some(item) = stream.next().await {
             if let Ok(meta) = item {
@@ -484,7 +486,11 @@ impl PaimonReader {
         &self,
         manifest_list_name: &str,
     ) -> Result<Vec<ManifestListEntry>, Box<dyn Error + Send + Sync>> {
-        let manifest_list_path = self.base_path.child("manifest").child(manifest_list_name);
+        let manifest_list_path = self
+            .base_path
+            .clone()
+            .join("manifest")
+            .join(manifest_list_name);
         debug!("Parsing manifest-list: {}", manifest_list_path);
 
         let result = self.store.get(&manifest_list_path).await?;
@@ -515,7 +521,7 @@ impl PaimonReader {
         &self,
         manifest_name: &str,
     ) -> Result<Vec<ManifestEntry>, Box<dyn Error + Send + Sync>> {
-        let manifest_path = self.base_path.child("manifest").child(manifest_name);
+        let manifest_path = self.base_path.clone().join("manifest").join(manifest_name);
         debug!("Parsing manifest: {}", manifest_path);
 
         let result = self.store.get(&manifest_path).await?;

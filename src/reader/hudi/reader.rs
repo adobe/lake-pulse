@@ -370,7 +370,7 @@ impl HudiReader {
         let store = Arc::new(store);
 
         // Read hoodie.properties
-        let props_path = base_path.child(".hoodie").child("hoodie.properties");
+        let props_path = base_path.clone().join(".hoodie").join("hoodie.properties");
         let props_content = match store.get(&props_path).await {
             Ok(result) => {
                 let bytes = result.bytes().await?;
@@ -400,7 +400,7 @@ impl HudiReader {
         info!("Extracting metrics from Hudi table");
 
         // List timeline files
-        let hoodie_path = self.base_path.child(".hoodie");
+        let hoodie_path = self.base_path.clone().join(".hoodie");
         let timeline_files = self.list_timeline_files(&hoodie_path).await?;
 
         // Parse timeline and extract metrics
