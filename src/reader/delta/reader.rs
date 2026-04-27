@@ -317,7 +317,7 @@ mod tests {
         let metrics = result.unwrap();
 
         // Verify basic metrics structure
-        assert!(metrics.version >= 0, "Version should be non-negative");
+        assert!(metrics.version > 0, "Delta table should have commits");
         assert!(metrics.protocol.min_reader_version >= 0);
         assert!(metrics.protocol.min_writer_version >= 0);
         assert!(
@@ -485,8 +485,10 @@ mod tests {
             .await
             .expect("Failed to extract metrics");
 
-        // The test table should have at least version 0
-        assert!(metrics.version >= 0);
+        assert!(
+            metrics.version > 0,
+            "Delta table should have multiple commits"
+        );
     }
 
     #[tokio::test]

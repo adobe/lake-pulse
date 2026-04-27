@@ -12,6 +12,7 @@
 // each license.
 
 use chrono::DateTime;
+use deltalake::kernel::Version;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::fmt::{Display, Formatter, Result as FmtResult};
@@ -20,7 +21,7 @@ use std::fmt::{Display, Formatter, Result as FmtResult};
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DeltaMetrics {
     /// Table version
-    pub version: i64,
+    pub version: Version,
 
     /// Protocol version information
     pub protocol: ProtocolInfo,
@@ -789,21 +790,13 @@ mod tests {
     #[test]
     fn test_large_version_number() {
         let mut metrics = DeltaMetrics::new();
-        metrics.version = i64::MAX;
+        metrics.version = u64::MAX;
 
-        assert_eq!(metrics.version, i64::MAX);
+        assert_eq!(metrics.version, u64::MAX);
 
         let json = serde_json::to_string(&metrics).unwrap();
         let deserialized: DeltaMetrics = serde_json::from_str(&json).unwrap();
-        assert_eq!(deserialized.version, i64::MAX);
-    }
-
-    #[test]
-    fn test_negative_version_number() {
-        let mut metrics = DeltaMetrics::new();
-        metrics.version = -1;
-
-        assert_eq!(metrics.version, -1);
+        assert_eq!(deserialized.version, u64::MAX);
     }
 
     #[test]
