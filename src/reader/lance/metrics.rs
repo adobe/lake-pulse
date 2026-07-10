@@ -212,7 +212,7 @@ impl Display for LanceMetrics {
         // Basic info
         writeln!(f, " {:<40} {:>32}", "Version", self.version)?;
         if !self.metadata.uuid.is_empty() {
-            writeln!(f, " {:<31}  {:>40}", "Table UUID", &self.metadata.uuid)?;
+            writeln!(f, " {:<31}  {:>40}", "Table UUID", self.metadata.uuid)?;
         }
         writeln!(
             f,

@@ -726,15 +726,11 @@ impl DeltaAnalyzer {
                                 schema = Some(parsed);
                             }
                         }
-                        ("createdTime", Field::Long(v)) => {
-                            if *v > 0 {
-                                timestamp = *v as u64;
-                            }
+                        ("createdTime", Field::Long(v)) if *v > 0 => {
+                            timestamp = *v as u64;
                         }
-                        ("createdTime", Field::Int(v)) => {
-                            if *v > 0 {
-                                timestamp = *v as u64;
-                            }
+                        ("createdTime", Field::Int(v)) if *v > 0 => {
+                            timestamp = *v as u64;
                         }
                         _ => {}
                     }

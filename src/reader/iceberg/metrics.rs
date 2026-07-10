@@ -342,7 +342,7 @@ impl Display for IcebergMetrics {
         // Basic info
         writeln!(f, " {:<40} {:>32}", "Format Version", self.format_version)?;
         if !self.table_uuid.is_empty() {
-            writeln!(f, " {:<31}  {:>40}", "Table UUID", &self.table_uuid)?;
+            writeln!(f, " {:<31}  {:>40}", "Table UUID", self.table_uuid)?;
         }
         if let Some(snapshot_id) = self.current_snapshot_id {
             writeln!(f, " {:<40} {:>32}", "Current Snapshot ID", snapshot_id)?;

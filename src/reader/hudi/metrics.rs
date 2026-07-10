@@ -260,9 +260,9 @@ impl Display for HudiMetrics {
         writeln!(f, "{}", "━".repeat(80))?;
 
         // Basic info
-        writeln!(f, " {:<40} {:>32}", "Table Type", &self.table_type)?;
+        writeln!(f, " {:<40} {:>32}", "Table Type", self.table_type)?;
         if !self.table_name.is_empty() {
-            writeln!(f, " {:<40} {:>32}", "Table Name", &self.table_name)?;
+            writeln!(f, " {:<40} {:>32}", "Table Name", self.table_name)?;
         }
 
         // Metadata
@@ -282,7 +282,7 @@ impl Display for HudiMetrics {
         writeln!(
             f,
             " {:<40} {:>32}",
-            "Format Provider", &self.metadata.format_provider
+            "Format Provider", self.metadata.format_provider
         )?;
 
         // Table Properties

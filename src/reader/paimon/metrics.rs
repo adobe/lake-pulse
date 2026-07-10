@@ -274,12 +274,12 @@ impl Display for PaimonMetrics {
 
         // Basic info
         if !self.table_name.is_empty() {
-            writeln!(f, " {:<40} {:>32}", "Table Name", &self.table_name)?;
+            writeln!(f, " {:<40} {:>32}", "Table Name", self.table_name)?;
         }
 
         // Metadata
         if !self.metadata.uuid.is_empty() {
-            writeln!(f, " {:<40} {:>32}", "Table UUID", &self.metadata.uuid)?;
+            writeln!(f, " {:<40} {:>32}", "Table UUID", self.metadata.uuid)?;
         }
         writeln!(
             f,
