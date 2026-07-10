@@ -31,7 +31,7 @@ tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
 
 deltalake = { version = "0.31", features = ["deltalake-aws", "deltalake-azure"] }
 deltalake-azure = "0.14"
-deltalake-aws = "0.14"
+deltalake-aws = "0.15"
 iceberg = "0.9.0"
 lance = { version = "4.0", optional = true }
 lance-index = { version = "4.0", optional = true }
