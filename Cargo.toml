@@ -37,7 +37,7 @@ lance = { version = "4.0", optional = true }
 lance-index = { version = "4.0", optional = true }
 apache-avro = { version = "0.21", optional = true, features = ["zstandard"] }
 
-object_store = { version = "0.13", features = ["aws", "azure", "gcp", "http"] }
+object_store = { version = "0.14", features = ["aws", "azure", "gcp", "http"] }
 url = "2.5"
 async-trait = "0.1"
 thiserror = "2.0"
