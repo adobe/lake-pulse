@@ -194,7 +194,7 @@ impl Display for DeltaMetrics {
             "Writer Features",
             format!("{:?}", self.protocol.writer_features)
         )?;
-        writeln!(f, " {:<31}  {:>40}", "Table ID", &self.metadata.id)?;
+        writeln!(f, " {:<31}  {:>40}", "Table ID", self.metadata.id)?;
         writeln!(
             f,
             " {:<40} {:>32}",
