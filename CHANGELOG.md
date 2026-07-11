@@ -7,6 +7,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.1](https://github.com/adobe/lake-pulse/compare/v0.3.0...v0.3.1) - 2026-07-11
+
+### Dependencies
+
+- *(deps)* update lance to 8.0, lance-index to 8.0 ([#116](https://github.com/adobe/lake-pulse/pull/116))
+- *(deps)* object_store to 0.14, hdfs-native-object-store to 0.17 ([#115](https://github.com/adobe/lake-pulse/pull/115))
+- *(deps)* update deltalake-azure requirement from 0.14 to 0.15 ([#102](https://github.com/adobe/lake-pulse/pull/102))
+- *(deps)* update deltalake requirement from 0.31 to 0.32 ([#100](https://github.com/adobe/lake-pulse/pull/100))
+- *(deps)* update deltalake-aws requirement from 0.14 to 0.15 ([#101](https://github.com/adobe/lake-pulse/pull/101))
+- *(deps)* update parquet requirement from 58.0 to 59.1 ([#108](https://github.com/adobe/lake-pulse/pull/108))
+- *(deps)* update lance & lance-index requirement from 2.0 to 4.0
+- *(deps)* update iceberg requirement from 0.8.0 to 0.9.0
+- *(deps)* update parquet requirement from 57.1 to 58.0
+- *(deps)* update deltalake-aws requirement from 0.13 to 0.14
+- *(deps)* update deltalake-azure requirement from 0.13 to 0.14
+- *(deps)* update deltalake requirement from 0.30 to 0.31
+- *(deps)* update lance and lance-index requirements from 1.0 to 2.0
+
+### Documentation
+
+- Update docs to version `0.3`
+
+### Fixed
+
+- Get away from deprecated funcs for `object_store`
+
 ## [0.3.0](https://github.com/adobe/lake-pulse/compare/v0.2.2...v0.3.0) - 2026-01-23
 
 ### Added
