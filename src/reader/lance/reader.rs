@@ -13,7 +13,7 @@
 
 use super::metrics::{FileStatistics, FragmentMetrics, IndexMetrics, LanceMetrics, TableMetadata};
 use lance::dataset::Dataset;
-use lance_index::traits::DatasetIndexExt;
+use lance::index::DatasetIndexExt;
 use serde_json::json;
 use std::collections::HashMap;
 use std::error::Error;
@@ -221,7 +221,7 @@ impl LanceReader {
         let mut max_size: u64 = 0;
 
         // Get the object store for querying deletion file sizes
-        let object_store = &self.dataset.object_store;
+        let object_store = self.dataset.object_store(None).await?;
 
         // Get the _deletions directory path
         // We use indices_dir() which returns base.child("indices"), then get its sibling "_deletions"
@@ -272,9 +272,9 @@ impl LanceReader {
                 };
 
                 // Try to get the actual file size from the object store
-                match object_store.inner.head(&deletion_path).await {
-                    Ok(meta) => {
-                        total_deletion_size += meta.size;
+                match object_store.size(&deletion_path).await {
+                    Ok(size) => {
+                        total_deletion_size += size;
                     }
                     Err(e) => {
                         // Fall back to estimate if we can't get the actual size
