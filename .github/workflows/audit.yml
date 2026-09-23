@@ -32,6 +32,8 @@ jobs:
 
       - name: Setup Rust toolchain
         uses: actions-rust-lang/setup-rust-toolchain@v2
+        with:
+          build-warnings: warn
 
       - name: Generate Cargo.lock
         run: cargo generate-lockfile

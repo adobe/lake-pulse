@@ -41,6 +41,8 @@ jobs:
 
       - name: Install Rust toolchain
         uses: actions-rust-lang/setup-rust-toolchain@v2
+        with:
+          build-warnings: warn
 
       - name: Run release-plz release
         uses: release-plz/action@v0.5
@@ -76,6 +78,8 @@ jobs:
 
       - name: Install Rust toolchain
         uses: actions-rust-lang/setup-rust-toolchain@v2
+        with:
+          build-warnings: warn
 
       - name: Run release-plz release-pr
         uses: release-plz/action@v0.5

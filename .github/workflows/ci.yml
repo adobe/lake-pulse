@@ -78,6 +78,7 @@ jobs:
       - name: Setup Rust toolchain
         uses: actions-rust-lang/setup-rust-toolchain@v2
         with:
+          build-warnings: warn
           components: rustfmt, clippy
 
       - name: Check formatting
@@ -118,6 +119,8 @@ jobs:
 
       - name: Setup Rust toolchain
         uses: actions-rust-lang/setup-rust-toolchain@v2
+        with:
+          build-warnings: warn
 
       - name: Build
         run: cargo build ${{ matrix.features }} --workspace
@@ -143,6 +146,8 @@ jobs:
 
       - name: Setup Rust toolchain
         uses: actions-rust-lang/setup-rust-toolchain@v2
+        with:
+          build-warnings: warn
 
       - name: Fix Iceberg metadata paths
         run: ./examples/data/iceberg_dataset/fix_paths.sh
@@ -185,6 +190,8 @@ jobs:
 
       - name: Setup Rust toolchain
         uses: actions-rust-lang/setup-rust-toolchain@v2
+        with:
+          build-warnings: warn
 
       - name: Build
         run: cargo build --all-features --workspace
@@ -211,6 +218,7 @@ jobs:
       - name: Setup Rust toolchain
         uses: actions-rust-lang/setup-rust-toolchain@v2
         with:
+          build-warnings: warn
           components: llvm-tools-preview
 
       - name: Install cargo-llvm-cov
