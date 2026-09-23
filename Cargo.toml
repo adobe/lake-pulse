@@ -33,7 +33,7 @@ deltalake = { version = "1.0", features = ["deltalake-aws", "deltalake-azure"] }
 deltalake-azure = "1.0"
 deltalake-aws = "1.0"
 iceberg = "0.10.1"
-lance = { version = "11.0", optional = true }
+lance = { version = "12.0", optional = true }
 lance-index = { version = "11.0", optional = true }
 apache-avro = { version = "0.22", optional = true, features = ["zstandard"] }
 
