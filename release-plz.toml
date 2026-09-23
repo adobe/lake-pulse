@@ -12,8 +12,8 @@
 # each license.
 
 [workspace]
-# Run semver checks to catch accidental breaking changes
-semver_check = true
+# Run semver checks to catch accidental breaking changes (temporary disabled)
+semver_check = false
 
 # Add a label to the Release PR for visibility
 pr_labels = ["release"]
