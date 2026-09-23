@@ -76,8 +76,9 @@ jobs:
           sudo apt-get install -y protobuf-compiler
 
       - name: Setup Rust toolchain
-        uses: actions-rust-lang/setup-rust-toolchain@v1
+        uses: actions-rust-lang/setup-rust-toolchain@v2
         with:
+          build-warnings: warn
           components: rustfmt, clippy
 
       - name: Check formatting
@@ -117,7 +118,9 @@ jobs:
           sudo apt-get install -y protobuf-compiler
 
       - name: Setup Rust toolchain
-        uses: actions-rust-lang/setup-rust-toolchain@v1
+        uses: actions-rust-lang/setup-rust-toolchain@v2
+        with:
+          build-warnings: warn
 
       - name: Build
         run: cargo build ${{ matrix.features }} --workspace
@@ -142,7 +145,9 @@ jobs:
           sudo apt-get install -y protobuf-compiler
 
       - name: Setup Rust toolchain
-        uses: actions-rust-lang/setup-rust-toolchain@v1
+        uses: actions-rust-lang/setup-rust-toolchain@v2
+        with:
+          build-warnings: warn
 
       - name: Fix Iceberg metadata paths
         run: ./examples/data/iceberg_dataset/fix_paths.sh
@@ -184,7 +189,9 @@ jobs:
         run: choco install protoc
 
       - name: Setup Rust toolchain
-        uses: actions-rust-lang/setup-rust-toolchain@v1
+        uses: actions-rust-lang/setup-rust-toolchain@v2
+        with:
+          build-warnings: warn
 
       - name: Build
         run: cargo build --all-features --workspace
@@ -209,8 +216,9 @@ jobs:
           sudo apt-get install -y protobuf-compiler
 
       - name: Setup Rust toolchain
-        uses: actions-rust-lang/setup-rust-toolchain@v1
+        uses: actions-rust-lang/setup-rust-toolchain@v2
         with:
+          build-warnings: warn
           components: llvm-tools-preview
 
       - name: Install cargo-llvm-cov

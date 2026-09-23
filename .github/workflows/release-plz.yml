@@ -40,7 +40,9 @@ jobs:
           sudo apt-get install -y protobuf-compiler
 
       - name: Install Rust toolchain
-        uses: actions-rust-lang/setup-rust-toolchain@v1
+        uses: actions-rust-lang/setup-rust-toolchain@v2
+        with:
+          build-warnings: warn
 
       - name: Run release-plz release
         uses: release-plz/action@v0.5
@@ -75,7 +77,9 @@ jobs:
           sudo apt-get install -y protobuf-compiler
 
       - name: Install Rust toolchain
-        uses: actions-rust-lang/setup-rust-toolchain@v1
+        uses: actions-rust-lang/setup-rust-toolchain@v2
+        with:
+          build-warnings: warn
 
       - name: Run release-plz release-pr
         uses: release-plz/action@v0.5
