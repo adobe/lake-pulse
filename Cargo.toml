@@ -45,7 +45,7 @@ futures = { version = "0.3", features = ["std"] }
 bytes = "1.0"
 chrono = "0.4"
 log = "0.4.28"
-parquet = "59.1"
+parquet = "60.0"
 hdfs-native-object-store = "0.17"
 iceberg-storage-opendal = { version = "0.10.1", features = ["opendal-all"] }
 
