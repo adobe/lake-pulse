@@ -7,6 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.2](https://github.com/adobe/lake-pulse/compare/v0.3.1...v0.3.2) - 2026-09-23
+
+### Dependencies
+
+- *(deps)* update lance-index requirement from 11.0 to 12.0 ([#132](https://github.com/adobe/lake-pulse/pull/132))
+- *(deps)* update lance requirement from 11.0 to 12.0 ([#131](https://github.com/adobe/lake-pulse/pull/131))
+- *(deps)* update parquet requirement from 59.1 to 60.0 ([#133](https://github.com/adobe/lake-pulse/pull/133))
+- *(deps)* update deltalake and related deps to 1.0 ([#134](https://github.com/adobe/lake-pulse/pull/134))
+- *(deps)* update lance-index requirement from 10.0 to 11.0 ([#128](https://github.com/adobe/lake-pulse/pull/128))
+- *(deps)* update lance requirement from 10.0 to 11.0 ([#129](https://github.com/adobe/lake-pulse/pull/129))
+- *(deps)* update iceberg related deps versions from 0.9.0 to 0.10.1 ([#127](https://github.com/adobe/lake-pulse/pull/127))
+- *(deps)* update lance-index requirement from 9.0 to 10.0 ([#125](https://github.com/adobe/lake-pulse/pull/125))
+- *(deps)* update lance requirement from 9.0 to 10.0 ([#126](https://github.com/adobe/lake-pulse/pull/126))
+- *(deps)* update apache-avro requirement from 0.21 to 0.22 ([#124](https://github.com/adobe/lake-pulse/pull/124))
+- *(deps)* update lance requirement from 8.0 to 9.0 ([#120](https://github.com/adobe/lake-pulse/pull/120))
+- *(deps)* update lance-index requirement from 8.0 to 9.0 ([#119](https://github.com/adobe/lake-pulse/pull/119))
+
 ## [0.3.1](https://github.com/adobe/lake-pulse/compare/v0.3.0...v0.3.1) - 2026-07-11
 
 ### Dependencies
