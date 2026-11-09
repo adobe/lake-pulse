@@ -47,7 +47,7 @@ chrono = "0.4"
 log = "0.4.28"
 parquet = "60.0"
 hdfs-native-object-store = "0.17"
-iceberg-storage-opendal = { version = "0.10.1", features = ["opendal-all"] }
+iceberg-storage-opendal = { version = "0.11.0", features = ["opendal-all"] }
 
 [dev-dependencies]
 tempfile = "3.8"
