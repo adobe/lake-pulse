@@ -22,7 +22,6 @@ on:
 
 permissions:
   contents: read
-  checks: write
 
 jobs:
   audit:
@@ -66,15 +65,20 @@ jobs:
               summary = `Found ${parts.join(' and ')} in dependencies.`;
             }
 
-            await github.rest.checks.create({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              name: 'Security Audit',
-              head_sha: context.sha,
-              status: 'completed',
-              conclusion: hasVulnerabilities ? 'neutral' : 'success',
-              output: {
-                title: hasVulnerabilities ? `⚠️ Security issue found (${vulnCount} vulnerabilit${vulnCount === 1 ? 'y' : 'ies'}/${warnCount} warning${warnCount === 1 ? '' : 's'})` : '✅ No issues found',
-                summary: summary
-              }
-            });
+            await core.summary
+              .addHeading('Security Audit')
+              .addRaw(summary)
+              .write();
+
+            require('node:fs').writeFileSync(
+              'audit-results.json',
+              JSON.stringify({ hasVulnerabilities, vulnCount, warnCount })
+            );
+
+      - name: Save audit results
+        uses: actions/upload-artifact@v7
+        with:
+          name: audit-results
+          path: audit-results.json
+          if-no-files-found: error
+          retention-days: 7

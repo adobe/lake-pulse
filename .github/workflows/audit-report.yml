@@ -1,0 +1,78 @@
+# Copyright 2025 Adobe. All rights reserved.
+# This file is licensed to you under the Apache License,
+# Version 2.0 (http://www.apache.org/licenses/LICENSE-2.0)
+# or the MIT license (http://opensource.org/licenses/MIT),
+# at your option.
+#
+# Unless required by applicable law or agreed to in writing,
+# this software is distributed on an "AS IS" BASIS, WITHOUT
+# WARRANTIES OR REPRESENTATIONS OF ANY KIND, either express or
+# implied. See the LICENSE-MIT and LICENSE-APACHE files for the
+# specific language governing permissions and limitations under
+# each license.
+
+name: Audit Report
+
+on:
+  workflow_run:
+    workflows: [Audit]
+    types: [completed]
+
+permissions:
+  actions: read
+  checks: write
+
+jobs:
+  report:
+    if: github.event.workflow_run.conclusion == 'success'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download audit results
+        uses: actions/download-artifact@v8
+        with:
+          name: audit-results
+          path: audit-results
+          run-id: ${{ github.event.workflow_run.id }}
+          github-token: ${{ github.token }}
+
+      - name: Publish audit check
+        uses: actions/github-script@v9
+        with:
+          script: |
+            const fs = require('node:fs');
+            const path = 'audit-results/audit-results.json';
+            if (fs.statSync(path).size > 4096) {
+              throw new Error('Audit results exceed the expected size.');
+            }
+
+            const { hasVulnerabilities, vulnCount, warnCount } =
+              JSON.parse(fs.readFileSync(path, 'utf8'));
+
+            if (
+              typeof hasVulnerabilities !== 'boolean' ||
+              !Number.isSafeInteger(vulnCount) || vulnCount < 0 ||
+              !Number.isSafeInteger(warnCount) || warnCount < 0
+            ) {
+              throw new Error('Invalid audit results.');
+            }
+
+            let summary = 'All dependencies passed security audit.';
+            if (hasVulnerabilities || warnCount > 0) {
+              const parts = [];
+              if (vulnCount > 0) parts.push(`${vulnCount} vulnerabilit${vulnCount === 1 ? 'y' : 'ies'}`);
+              if (warnCount > 0) parts.push(`${warnCount} warning${warnCount === 1 ? '' : 's'}`);
+              summary = `Found ${parts.join(' and ')} in dependencies.`;
+            }
+
+            await github.rest.checks.create({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              name: 'Security Audit',
+              head_sha: context.payload.workflow_run.head_sha,
+              status: 'completed',
+              conclusion: hasVulnerabilities ? 'neutral' : 'success',
+              output: {
+                title: hasVulnerabilities ? `⚠️ Security issue found (${vulnCount} vulnerabilit${vulnCount === 1 ? 'y' : 'ies'}/${warnCount} warning${warnCount === 1 ? '' : 's'})` : '✅ No issues found',
+                summary
+              }
+            });
