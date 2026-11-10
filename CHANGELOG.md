@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.3](https://github.com/adobe/lake-pulse/compare/v0.3.2...v0.3.3) - 2026-11-10
+
+### Dependencies
+
+- *(deps)* update iceberg and iceberg-storage-opendal to 0.11.0 ([#146](https://github.com/adobe/lake-pulse/pull/146))
+
+### Fixed
+
+- *(azure)* preserve SAS token signature encoding and padding ([#143](https://github.com/adobe/lake-pulse/pull/143))
+- *(ci)* publish audit checks through a trusted workflow  ([#144](https://github.com/adobe/lake-pulse/pull/144))
+
 ### Fixed
 
 - Preserve Azure SAS signature encoding and padding by delegating token parsing to `object_store`.
