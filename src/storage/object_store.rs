@@ -20,9 +20,12 @@ use bytes::Bytes;
 use futures::stream::StreamExt;
 use hdfs_native_object_store::HdfsObjectStoreBuilder;
 use object_store::{
-    aws::AmazonS3Builder, azure::MicrosoftAzureBuilder, gcp::GoogleCloudStorageBuilder,
-    http::HttpBuilder, local::LocalFileSystem, ClientOptions, ObjectStore, ObjectStoreExt,
-    RetryConfig,
+    aws::AmazonS3Builder,
+    azure::{AzureConfigKey, MicrosoftAzure, MicrosoftAzureBuilder},
+    gcp::GoogleCloudStorageBuilder,
+    http::HttpBuilder,
+    local::LocalFileSystem,
+    ClientOptions, ObjectStore, ObjectStoreExt, RetryConfig,
 };
 use std::collections::HashMap;
 use std::fmt::{Debug, Formatter};
@@ -90,7 +93,8 @@ impl ObjectStoreProvider {
         match config.storage_type {
             StorageType::Local => Self::build_local_store(config),
             StorageType::Aws => Self::build_aws_store(config),
-            StorageType::Azure => Self::build_azure_store(config),
+            StorageType::Azure => Self::build_azure_store(config)
+                .map(|(store, path)| (Box::new(store) as Box<dyn ObjectStore>, path)),
             StorageType::Gcs => Self::build_gcs_store(config),
             StorageType::Hdfs => Self::build_hdfs_store(config),
             StorageType::Http => Self::build_http_store(config),
@@ -349,7 +353,7 @@ impl ObjectStoreProvider {
     /// * Required Azure configuration options are missing
     /// * Azure credentials are invalid
     /// * The Azure store cannot be initialized
-    fn build_azure_store(config: &StorageConfig) -> StorageResult<(Box<dyn ObjectStore>, String)> {
+    fn build_azure_store(config: &StorageConfig) -> StorageResult<(MicrosoftAzure, String)> {
         let mut builder = MicrosoftAzureBuilder::new()
             .with_client_options(Self::build_connection_options(config))
             .with_retry(Self::build_retry_options(config));
@@ -381,19 +385,7 @@ impl ObjectStoreProvider {
                 }
                 "access_key" | "account_key" => builder = builder.with_access_key(value),
                 "sas_token" => {
-                    // Parse SAS token query parameters
-                    let pairs: Vec<(String, String)> = value
-                        .trim_start_matches('?')
-                        .split('&')
-                        .filter_map(|pair| {
-                            let mut parts = pair.split('=');
-                            match (parts.next(), parts.next()) {
-                                (Some(k), Some(v)) => Some((k.to_string(), v.to_string())),
-                                _ => None,
-                            }
-                        })
-                        .collect();
-                    builder = builder.with_sas_authorization(pairs);
+                    builder = builder.with_config(AzureConfigKey::SasKey, value.clone());
                 }
                 "tenant_id" => builder = builder.with_tenant_id(value),
                 "client_id" => builder = builder.with_client_id(value),
@@ -441,7 +433,7 @@ impl ObjectStoreProvider {
             format!("abfss://{}@{}.{}", container, account_name, endpoint_domain)
         };
 
-        Ok((Box::new(store), base_url))
+        Ok((store, base_url))
     }
 
     /// Build a GCS store.
@@ -971,8 +963,51 @@ impl Debug for ObjectStoreProvider {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use object_store::azure::AzureAuthorizer;
+    use object_store::client::HttpRequest;
     use std::fs;
     use tempfile::TempDir;
+
+    #[tokio::test]
+    async fn test_azure_sas_preserves_signature_in_authorized_request() {
+        for token in [
+            "sv=2023-11-03&sr=d&sp=rl&sdd=2&sig=test%2Bsignature%2F%3D%3D",
+            "?sv=2023-11-03&sr=d&sp=rl&sdd=2&sig=test%2Bsignature%2F%3D%3D",
+            "sv=2023-11-03&sr=d&sp=rl&sdd=2&sig=test+signature/==",
+        ] {
+            let config = StorageConfig::azure()
+                .with_option("account_name", "account")
+                .with_option("container", "container")
+                .with_option("sas_token", token);
+            let (store, _) = ObjectStoreProvider::build_azure_store(&config).unwrap();
+            let credentials = store.credentials().get_credential().await.unwrap();
+            let mut request = HttpRequest::new(Bytes::new().into());
+            *request.uri_mut() =
+                "https://account.blob.core.windows.net/container/table/file.parquet"
+                    .parse()
+                    .unwrap();
+            AzureAuthorizer::new(&credentials, "account")
+                .try_authorize(&mut request)
+                .unwrap();
+            let url = url::Url::parse(&request.uri().to_string()).unwrap();
+            let query: HashMap<_, _> = url.query_pairs().into_owned().collect();
+            assert_eq!(query["sig"], "test+signature/==");
+            assert_eq!(query["sv"], "2023-11-03");
+            assert_eq!(query["sr"], "d");
+            assert_eq!(query["sp"], "rl");
+            assert_eq!(query["sdd"], "2");
+            assert!(!url.query().unwrap().contains("%25"));
+        }
+    }
+
+    #[test]
+    fn test_azure_sas_rejects_malformed_query_parameters() {
+        let config = StorageConfig::azure()
+            .with_option("account_name", "account")
+            .with_option("container", "container")
+            .with_option("sas_token", "sv=2023-11-03&missing-value&sig=test");
+        assert!(ObjectStoreProvider::build_azure_store(&config).is_err());
+    }
 
     #[test]
     fn test_build_connection_options_default() {

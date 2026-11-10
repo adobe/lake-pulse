@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- Preserve Azure SAS signature encoding and padding by delegating token parsing to `object_store`.
+
 ## [0.3.2](https://github.com/adobe/lake-pulse/compare/v0.3.1...v0.3.2) - 2026-11-02
 
 ### Dependencies
