@@ -51,6 +51,7 @@ use tracing::info;
 /// * `sort_order_columns` - Columns used for sorting/ordering
 /// * `schema_changes` - List of all schema changes detected
 /// * `delete_files_count` - Number of delete files (Iceberg's merge-on-read feature)
+/// * `deleted_rows_count` - Number of deleted rows across delete files
 /// * `delete_files_size` - Total size of delete files in bytes
 #[derive(Debug, Default)]
 pub struct MetadataProcessingResult {
@@ -67,6 +68,7 @@ pub struct MetadataProcessingResult {
     pub sort_order_columns: Vec<String>,
     pub schema_changes: Vec<SchemaChange>,
     pub delete_files_count: u64,
+    pub deleted_rows_count: u64,
     pub delete_files_size: u64,
 }
 
@@ -397,55 +399,57 @@ impl IcebergAnalyzer {
     /// * `json` - The Iceberg metadata JSON
     /// * `result` - The result object to update (mutated in place)
     fn extract_snapshot_metrics(&self, json: &Value, result: &mut MetadataProcessingResult) {
-        if let Some(snapshots) = json.get("snapshots").and_then(|s| s.as_array()) {
-            result.total_snapshots = snapshots.len();
+        let Some(snapshots) = json.get("snapshots").and_then(|s| s.as_array()) else {
+            return;
+        };
+        result.total_snapshots = snapshots.len();
 
-            for snapshot in snapshots {
-                if let Some(timestamp_ms) = snapshot.get("timestamp-ms").and_then(|t| t.as_u64()) {
-                    result.oldest_timestamp = result.oldest_timestamp.min(timestamp_ms);
-                    result.newest_timestamp = result.newest_timestamp.max(timestamp_ms);
-                }
+        for snapshot in snapshots {
+            if let Some(timestamp_ms) = snapshot.get("timestamp-ms").and_then(|t| t.as_u64()) {
+                result.oldest_timestamp = result.oldest_timestamp.min(timestamp_ms);
+                result.newest_timestamp = result.newest_timestamp.max(timestamp_ms);
+            }
 
-                // Estimate snapshot size from summary
-                if let Some(summary) = snapshot.get("summary").and_then(|s| s.as_object()) {
-                    if let Some(total_data_files) =
-                        summary.get("total-data-files").and_then(|v| v.as_str())
-                    {
-                        // Rough estimate based on file count
-                        if let Ok(file_count) = total_data_files.parse::<u64>() {
-                            result.total_historical_size += file_count * 1024 * 1024;
-                            // Estimate 1MB per file
-                        }
-                    }
-
-                    // Extract delete file metrics (Iceberg v2+)
-                    if let Some(total_delete_files) =
-                        summary.get("total-delete-files").and_then(|v| v.as_str())
-                    {
-                        if let Ok(delete_count) = total_delete_files.parse::<u64>() {
-                            result.delete_files_count += delete_count;
-                        }
-                    }
-
-                    if let Some(total_position_deletes) = summary
-                        .get("total-position-deletes")
-                        .and_then(|v| v.as_str())
-                    {
-                        if let Ok(position_deletes) = total_position_deletes.parse::<u64>() {
-                            result.delete_files_count += position_deletes;
-                        }
-                    }
-
-                    if let Some(total_equality_deletes) = summary
-                        .get("total-equality-deletes")
-                        .and_then(|v| v.as_str())
-                    {
-                        if let Ok(equality_deletes) = total_equality_deletes.parse::<u64>() {
-                            result.delete_files_count += equality_deletes;
-                        }
-                    }
+            // Estimate snapshot size from summary
+            if let Some(total_data_files) = snapshot
+                .get("summary")
+                .and_then(|s| s.get("total-data-files"))
+                .and_then(|v| v.as_str())
+            {
+                // Rough estimate based on file count
+                if let Ok(file_count) = total_data_files.parse::<u64>() {
+                    result.total_historical_size += file_count * 1024 * 1024;
+                    // Estimate 1MB per file
                 }
             }
+        }
+
+        // Delete metrics describe the current state, not snapshot history.
+        let current_snapshot = json
+            .get("current-snapshot-id")
+            .and_then(|id| id.as_i64())
+            .and_then(|id| {
+                snapshots
+                    .iter()
+                    .find(|s| s.get("snapshot-id").and_then(|v| v.as_i64()) == Some(id))
+            })
+            .or_else(|| snapshots.last());
+
+        if let Some(summary) = current_snapshot
+            .and_then(|s| s.get("summary"))
+            .and_then(|s| s.as_object())
+        {
+            let summary_count = |key: &str| {
+                summary
+                    .get(key)
+                    .and_then(|v| v.as_str())
+                    .and_then(|v| v.parse::<u64>().ok())
+                    .unwrap_or(0)
+            };
+
+            result.delete_files_count = summary_count("total-delete-files");
+            result.deleted_rows_count =
+                summary_count("total-position-deletes") + summary_count("total-equality-deletes");
         }
     }
 
@@ -583,38 +587,40 @@ impl IcebergAnalyzer {
         let update_metrics_start = SystemTime::now();
         let metadata_files_owned: Vec<_> =
             metadata_json_files.iter().cloned().enumerate().collect();
-        let results: Vec<Result<MetadataProcessingResult, Box<dyn Error + Send + Sync>>> =
-            stream::iter(metadata_files_owned)
-                .map(|(index, metadata_file)| {
-                    info!(
-                        "Starting processing Iceberg metadata file={}, index={}",
-                        &metadata_file.path.clone(),
-                        index
-                    );
-                    let path = metadata_file.path.clone();
-                    let analyzer = IcebergAnalyzer {
-                        storage_provider: Arc::clone(&self.storage_provider),
-                        parallelism,
-                    };
+        let results = stream::iter(metadata_files_owned)
+            .map(|(index, metadata_file)| {
+                info!(
+                    "Starting processing Iceberg metadata file={}, index={}",
+                    &metadata_file.path.clone(),
+                    index
+                );
+                let path = metadata_file.path.clone();
+                let read_path = path.clone();
+                let analyzer = IcebergAnalyzer {
+                    storage_provider: Arc::clone(&self.storage_provider),
+                    parallelism,
+                };
 
-                    let result = async move {
-                        let process_single_start = SystemTime::now();
-                        let r = analyzer.process_single_metadata_file(&path, index).await;
-                        info!(
-                            "Processed Iceberg metadata file={} in async, took={}",
-                            &path,
-                            process_single_start
-                                .elapsed()
-                                .unwrap_or_default()
-                                .as_millis(),
-                        );
-                        r
-                    };
-                    result
-                })
-                .buffer_unordered(parallelism)
-                .collect()
-                .await;
+                let result = async move {
+                    let process_single_start = SystemTime::now();
+                    let r = analyzer
+                        .process_single_metadata_file(&read_path, index)
+                        .await;
+                    info!(
+                        "Processed Iceberg metadata file={} in async, took={}",
+                        &read_path,
+                        process_single_start
+                            .elapsed()
+                            .unwrap_or_default()
+                            .as_millis(),
+                    );
+                    (path, r)
+                };
+                result
+            })
+            .buffer_unordered(parallelism)
+            .collect::<Vec<_>>()
+            .await;
 
         info!(
             "Finished the metrics from Iceberg metadata files, parallelism={}, metadata_files_count={}, \
@@ -645,8 +651,9 @@ impl IcebergAnalyzer {
         let mut schema_changes = Vec::new();
         let mut current_version = 0u64;
         let mut delete_files_count = 0u64;
+        let mut deleted_rows_count = 0u64;
 
-        for result in results {
+        for (path, result) in results {
             let r = result?;
 
             if partition_columns.is_empty() && !r.partition_columns.is_empty() {
@@ -663,7 +670,12 @@ impl IcebergAnalyzer {
             not_null_constraints += r.not_null_constraints;
             unique_constraints += r.unique_constraints;
             foreign_key_constraints += r.foreign_key_constraints;
-            delete_files_count += r.delete_files_count;
+
+            // Delete metrics reflect current state, so only use the latest metadata file.
+            if max_file_name.as_deref() == Some(path.as_str()) {
+                delete_files_count = r.delete_files_count;
+                deleted_rows_count = r.deleted_rows_count;
+            }
 
             if sort_order_columns.is_empty() {
                 sort_order_columns = r.sort_order_columns;
@@ -683,6 +695,7 @@ impl IcebergAnalyzer {
         if delete_files_count > 0 {
             let deletion_vector_metrics = self.calculate_deletion_vector_metrics(
                 delete_files_count,
+                deleted_rows_count,
                 oldest_timestamp,
                 newest_timestamp,
             );
@@ -865,6 +878,7 @@ impl IcebergAnalyzer {
     fn calculate_deletion_vector_metrics(
         &self,
         delete_files_count: u64,
+        deleted_rows_count: u64,
         oldest_timestamp: u64,
         _newest_timestamp: u64,
     ) -> DeletionVectorMetrics {
@@ -884,9 +898,6 @@ impl IcebergAnalyzer {
             0.0
         };
 
-        // Estimate deleted rows (rough estimate: 100 rows per delete file)
-        let deleted_rows = delete_files_count * 100;
-
         // Calculate impact score
         let impact_score =
             self.calculate_deletion_impact_score(delete_files_count, oldest_age_days);
@@ -896,13 +907,17 @@ impl IcebergAnalyzer {
             total_deletion_vector_size_bytes: total_dv_size,
             avg_deletion_vector_size_bytes: avg_dv_size,
             deletion_vector_age_days: oldest_age_days,
-            deleted_rows_count: deleted_rows,
+            deleted_rows_count,
             deletion_vector_impact_score: impact_score,
         }
     }
 
     /// Calculate deletion impact score
     fn calculate_deletion_impact_score(&self, delete_count: u64, age_days: f64) -> f64 {
+        if delete_count == 0 {
+            return 0.0;
+        }
+
         let mut score: f64 = 0.0;
 
         // More delete files = higher impact
@@ -1812,9 +1827,21 @@ mod tests {
     fn test_extract_snapshot_metrics_with_delete_files() {
         let analyzer = create_test_analyzer();
         let json = json!({
+            "current-snapshot-id": 2,
             "snapshots": [
                 {
+                    "snapshot-id": 1,
                     "timestamp-ms": 1234567890000_u64,
+                    "summary": {
+                        "total-data-files": "8",
+                        "total-delete-files": "100",
+                        "total-position-deletes": "50",
+                        "total-equality-deletes": "25"
+                    }
+                },
+                {
+                    "snapshot-id": 2,
+                    "timestamp-ms": 1234567891000_u64,
                     "summary": {
                         "total-data-files": "10",
                         "total-delete-files": "5",
@@ -1828,8 +1855,9 @@ mod tests {
 
         analyzer.extract_snapshot_metrics(&json, &mut result);
 
-        assert_eq!(result.total_snapshots, 1);
-        assert_eq!(result.delete_files_count, 10); // 5 + 3 + 2
+        assert_eq!(result.total_snapshots, 2);
+        assert_eq!(result.delete_files_count, 5);
+        assert_eq!(result.deleted_rows_count, 5); // 3 + 2
     }
 
     // Tests for extract_schema_and_constraints
@@ -2064,8 +2092,7 @@ mod tests {
 
         let score = analyzer.calculate_deletion_impact_score(0, 0.0);
 
-        assert!(score >= 0.0);
-        assert!(score <= 1.0);
+        assert_eq!(score, 0.0);
     }
 
     #[test]
@@ -2103,26 +2130,32 @@ mod tests {
     fn test_calculate_deletion_vector_metrics_zero() {
         let analyzer = create_test_analyzer();
 
-        let metrics = analyzer.calculate_deletion_vector_metrics(0, 0, 0);
+        let metrics = analyzer.calculate_deletion_vector_metrics(0, 0, 0, 0);
 
         assert_eq!(metrics.deletion_vector_count, 0);
         assert_eq!(metrics.total_deletion_vector_size_bytes, 0);
         assert_eq!(metrics.deleted_rows_count, 0);
+        assert_eq!(metrics.deletion_vector_impact_score, 0.0);
     }
 
     #[test]
     fn test_calculate_deletion_vector_metrics_with_deletes() {
         let analyzer = create_test_analyzer();
         let delete_count = 100;
+        let deleted_rows_count = 1_234;
         let now = chrono::Utc::now().timestamp() as u64;
         let oldest_timestamp = (now - 86400 * 30) * 1000; // 30 days ago in ms
 
-        let metrics =
-            analyzer.calculate_deletion_vector_metrics(delete_count, oldest_timestamp, now * 1000);
+        let metrics = analyzer.calculate_deletion_vector_metrics(
+            delete_count,
+            deleted_rows_count,
+            oldest_timestamp,
+            now * 1000,
+        );
 
         assert_eq!(metrics.deletion_vector_count, 100);
         assert_eq!(metrics.total_deletion_vector_size_bytes, 100 * 1024); // 1KB per delete file
-        assert_eq!(metrics.deleted_rows_count, 100 * 100); // 100 rows per delete file
+        assert_eq!(metrics.deleted_rows_count, deleted_rows_count);
         assert!(metrics.deletion_vector_age_days > 0.0);
         assert!(metrics.deletion_vector_impact_score > 0.0);
     }
@@ -2134,8 +2167,12 @@ mod tests {
         let now = chrono::Utc::now().timestamp() as u64;
         let oldest_timestamp = (now - 86400 * 120) * 1000; // 120 days ago in ms
 
-        let metrics =
-            analyzer.calculate_deletion_vector_metrics(delete_count, oldest_timestamp, now * 1000);
+        let metrics = analyzer.calculate_deletion_vector_metrics(
+            delete_count,
+            1_000,
+            oldest_timestamp,
+            now * 1000,
+        );
 
         assert_eq!(metrics.deletion_vector_count, 500);
         assert!(metrics.deletion_vector_age_days > 100.0);
