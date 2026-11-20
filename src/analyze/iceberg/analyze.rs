@@ -1882,6 +1882,72 @@ mod tests {
         assert_eq!(foreign_key, 1);
     }
 
+    // Tests for find_snapshot
+    #[test]
+    fn test_find_snapshot_finds_matching_snapshot() {
+        let snapshots = vec![
+            json!({"snapshot-id": 1, "timestamp-ms": 1_u64}),
+            json!({"snapshot-id": 2, "timestamp-ms": 2_u64}),
+            json!({"snapshot-id": 3, "timestamp-ms": 3_u64}),
+        ];
+
+        let found = find_snapshot(&snapshots, 2);
+
+        assert_eq!(found, Some(&snapshots[1]));
+    }
+
+    #[test]
+    fn test_find_snapshot_empty_slice_returns_none() {
+        assert_eq!(find_snapshot(&[], 1), None);
+    }
+
+    #[test]
+    fn test_find_snapshot_missing_id_returns_none() {
+        let snapshots = vec![json!({"snapshot-id": 1}), json!({"snapshot-id": 2})];
+
+        assert_eq!(find_snapshot(&snapshots, 99), None);
+    }
+
+    #[test]
+    fn test_find_snapshot_skips_entries_without_numeric_id() {
+        let non_numeric_ids = [
+            json!({"timestamp-ms": 1_u64}),
+            json!({"snapshot-id": "2"}),
+            json!({"snapshot-id": null}),
+            json!({"snapshot-id": 2.5}),
+        ];
+
+        for snapshot in &non_numeric_ids {
+            assert_eq!(
+                find_snapshot(std::slice::from_ref(snapshot), 2),
+                None,
+                "unexpected match for {snapshot}"
+            );
+        }
+
+        // Skipping a non-numeric entry must not stop the search, so the valid
+        // entry placed after them is still found.
+        let mut snapshots = non_numeric_ids.to_vec();
+        snapshots.push(json!({"snapshot-id": 2, "timestamp-ms": 5_u64}));
+
+        assert_eq!(find_snapshot(&snapshots, 2), Some(&snapshots[4]));
+    }
+
+    #[test]
+    fn test_find_snapshot_does_not_truncate_64_bit_ids() {
+        // 2^32 + 1 truncates to 1 in 32 bits, so an implementation that
+        // narrows the id would match the wrong snapshot instead.
+        let snapshots = vec![
+            json!({"snapshot-id": 1}),
+            json!({"snapshot-id": 4_294_967_297_i64}),
+        ];
+
+        assert_eq!(
+            find_snapshot(&snapshots, 4_294_967_297),
+            Some(&snapshots[1])
+        );
+    }
+
     // Tests for extract_snapshot_metrics
     #[test]
     fn test_extract_snapshot_metrics_empty() {
